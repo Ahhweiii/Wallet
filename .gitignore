@@ -1,0 +1,28 @@
+cat > .gitignore <<'EOF'
+# Xcode
+.DS_Store
+xcuserdata/
+*.xcuserstate
+DerivedData/
+.build/
+*.moved-aside
+*.xccheckout
+*.xcscmblueprint
+
+# Swift Package Manager
+.swiftpm/
+Package.resolved
+
+# CocoaPods / Carthage (if you don't use them, harmless)
+Pods/
+Carthage/
+
+# Fastlane
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots
+fastlane/test_output
+
+# Secrets
+*.env
+EOF

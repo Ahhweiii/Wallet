@@ -10,23 +10,25 @@ import SwiftData
 
 @main
 struct WalletApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Item.self,
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
-        do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
-
     var body: some Scene {
         WindowGroup {
             ContentView()
         }
-        .modelContainer(sharedModelContainer)
+        .modelContainer(makeContainer())
+    }
+
+    private func makeContainer() -> ModelContainer {
+        do {
+            let schema = Schema([Account.self, Transaction.self])
+            let config = ModelConfiguration(schema: schema) // local persistent store
+            return try ModelContainer(
+                for: schema,
+                migrationPlan: WalletMigrationPlan.self,
+                configurations: [config]
+            )
+        } catch {
+            fatalError("Failed to create ModelContainer: \(error)")
+        }
     }
 }
+
