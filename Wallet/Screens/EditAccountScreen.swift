@@ -16,7 +16,8 @@ struct EditAccountScreen: View {
                  _ amount: Decimal,
                  _ type: AccountType,
                  _ currentCredit: Decimal,
-                 _ isInCombinedCreditPool: Bool) -> Void
+                 _ isInCombinedCreditPool: Bool,
+                 _ billingCycleStartDay: Int) -> Void
 
     @Environment(\.dismiss) private var dismiss
 
@@ -26,10 +27,17 @@ struct EditAccountScreen: View {
     @State private var creditText: String
     @State private var selectedType: AccountType
     @State private var shareBankCreditLimit: Bool
+    @State private var billingCycleStartDay: Int
 
     init(vm: DashboardViewModel,
          account: Account,
-         onSave: @escaping (_ bankName: String, _ accountName: String, _ amount: Decimal, _ type: AccountType, _ currentCredit: Decimal, _ isInCombinedCreditPool: Bool) -> Void) {
+         onSave: @escaping (_ bankName: String,
+                            _ accountName: String,
+                            _ amount: Decimal,
+                            _ type: AccountType,
+                            _ currentCredit: Decimal,
+                            _ isInCombinedCreditPool: Bool,
+                            _ billingCycleStartDay: Int) -> Void) {
         self.vm = vm
         self.account = account
         self.onSave = onSave
@@ -40,6 +48,7 @@ struct EditAccountScreen: View {
         _creditText = State(initialValue: "\(account.currentCredit)")
         _selectedType = State(initialValue: account.type)
         _shareBankCreditLimit = State(initialValue: account.type == .credit ? account.isInCombinedCreditPool : false)
+        _billingCycleStartDay = State(initialValue: account.billingCycleStartDay)
     }
 
     private var normalizedBankName: String {
@@ -81,6 +90,41 @@ struct EditAccountScreen: View {
         return bankOk && accountOk && availableOk && creditOk
     }
 
+    /// Preview of the billing period based on the selected day
+    private var billingPeriodPreview: String {
+        let cal = Calendar.current
+        let now = Date()
+        let todayDay = cal.component(.day, from: now)
+
+        var startComps = cal.dateComponents([.year, .month], from: now)
+        if todayDay < billingCycleStartDay {
+            if let shifted = cal.date(byAdding: .month, value: -1, to: now) {
+                startComps = cal.dateComponents([.year, .month], from: shifted)
+            }
+        }
+
+        let daysInMonth = cal.range(of: .day, in: .month,
+            for: cal.date(from: startComps) ?? now)?.count ?? 28
+        startComps.day = min(billingCycleStartDay, daysInMonth)
+        startComps.hour = 0
+        startComps.minute = 0
+        startComps.second = 0
+
+        guard let start = cal.date(from: startComps),
+              let nextStart = cal.date(byAdding: .month, value: 1, to: start) else {
+            return "—"
+        }
+
+        let end = nextStart.addingTimeInterval(-1)
+
+        let df = DateFormatter()
+        df.dateFormat = "d MMM"
+        let dfEnd = DateFormatter()
+        dfEnd.dateFormat = "d MMM yyyy"
+
+        return "\(df.string(from: start)) – \(dfEnd.string(from: end))"
+    }
+
     var body: some View {
         NavigationStack {
             ZStack {
@@ -100,6 +144,8 @@ struct EditAccountScreen: View {
                         if selectedType == .credit {
                             pooledSection
                         }
+
+                        billingCycleSection
 
                         Color.clear.frame(height: 110)
                     }
@@ -123,6 +169,53 @@ struct EditAccountScreen: View {
             }
         }
     }
+
+    // MARK: - Billing Cycle Section
+
+    private var billingCycleSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Billing Cycle")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.6))
+
+            Text("The day of the month when spending resets for this account.")
+                .font(.system(size: 12, weight: .regular))
+                .foregroundStyle(.white.opacity(0.4))
+
+            HStack {
+                Text("Reset Day")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.white)
+
+                Spacer()
+
+                Picker("Day", selection: $billingCycleStartDay) {
+                    ForEach(1...31, id: \.self) { day in
+                        Text("\(day)").tag(day)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(.white)
+            }
+            .padding(14)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color(white: 0.14))
+            )
+
+            HStack(spacing: 4) {
+                Image(systemName: "calendar")
+                    .foregroundStyle(.white.opacity(0.4))
+                    .font(.system(size: 11))
+                Text("Current period: \(billingPeriodPreview)")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.4))
+            }
+            .padding(.leading, 4)
+        }
+    }
+
+    // MARK: - Existing Sections
 
     private var availableOrBalanceSection: some View {
         Group {
@@ -230,6 +323,8 @@ struct EditAccountScreen: View {
         }
     }
 
+    // MARK: - Save Bar
+
     private var saveBar: some View {
         Button {
             let b = normalizedBankName
@@ -240,7 +335,7 @@ struct EditAccountScreen: View {
                     return Decimal(string: balanceText) ?? account.amount
                 }
                 if shareBankCreditLimit, let shared = bankSharedAvailable {
-                    return shared // lock to bank
+                    return shared
                 }
                 return Decimal(string: balanceText) ?? account.amount
             }()
@@ -248,12 +343,12 @@ struct EditAccountScreen: View {
             let credit: Decimal = {
                 if selectedType != .credit { return Decimal(string: creditText) ?? account.currentCredit }
                 if shareBankCreditLimit, let shared = bankSharedCredit {
-                    return shared // lock to bank
+                    return shared
                 }
                 return Decimal(string: creditText) ?? account.currentCredit
             }()
 
-            onSave(b, a, amt, selectedType, credit, shareBankCreditLimit)
+            onSave(b, a, amt, selectedType, credit, shareBankCreditLimit, billingCycleStartDay)
             dismiss()
         } label: {
             Text("Save Changes")
@@ -273,6 +368,8 @@ struct EditAccountScreen: View {
         .padding(.bottom, 10)
         .background(Color.black.opacity(0.92))
     }
+
+    // MARK: - Helpers
 
     private func field(title: String, placeholder: String, text: Binding<String>) -> some View {
         VStack(alignment: .leading, spacing: 8) {

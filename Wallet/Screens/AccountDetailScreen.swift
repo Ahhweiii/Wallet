@@ -148,14 +148,15 @@ struct AccountDetailScreen: View {
         }
         .sheet(isPresented: $showEditSheet) {
             if let account = account {
-                EditAccountScreen(vm: vm, account: account) { bank, acctName, amount, type, credit, pooled in
+                EditAccountScreen(vm: vm, account: account) { bank, acctName, amount, type, credit, pooled, billingDay in
                     vm.updateAccount(id: accountId,
                                      bankName: bank,
                                      accountName: acctName,
                                      amount: amount,
                                      type: type,
                                      currentCredit: credit,
-                                     isInCombinedCreditPool: pooled)
+                                     isInCombinedCreditPool: pooled,
+                                     billingCycleStartDay: billingDay)
                 }
             }
         }

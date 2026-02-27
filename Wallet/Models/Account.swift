@@ -30,6 +30,9 @@ final class Account: Identifiable, Hashable {
 
     var isInCombinedCreditPool: Bool
 
+    /// The day of month (1–31) when this account's tracking period resets.
+    var billingCycleStartDay: Int
+
     init(id: UUID = UUID(),
          bankName: String,
          accountName: String,
@@ -38,7 +41,8 @@ final class Account: Identifiable, Hashable {
          type: AccountType,
          colorHex: String,
          iconSystemName: String,
-         isInCombinedCreditPool: Bool = false) {
+         isInCombinedCreditPool: Bool = false,
+         billingCycleStartDay: Int = 1) {
         self.id = id
         self.bankName = bankName
         self.accountName = accountName
@@ -48,6 +52,7 @@ final class Account: Identifiable, Hashable {
         self.colorHex = colorHex
         self.iconSystemName = iconSystemName
         self.isInCombinedCreditPool = isInCombinedCreditPool
+        self.billingCycleStartDay = billingCycleStartDay
     }
 
     var displayName: String {

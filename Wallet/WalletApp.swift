@@ -20,10 +20,9 @@ struct WalletApp: App {
     private func makeContainer() -> ModelContainer {
         do {
             let schema = Schema([Account.self, Transaction.self])
-            let config = ModelConfiguration(schema: schema) // local persistent store
+            let config = ModelConfiguration(schema: schema)
             return try ModelContainer(
                 for: schema,
-                migrationPlan: WalletMigrationPlan.self,
                 configurations: [config]
             )
         } catch {
@@ -31,4 +30,3 @@ struct WalletApp: App {
         }
     }
 }
-

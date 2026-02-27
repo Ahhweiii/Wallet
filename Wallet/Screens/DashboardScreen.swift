@@ -25,7 +25,6 @@ struct DashboardScreen: View {
     @State private var exportDocument = WalletBackupDocument()
     @State private var exportFilename = "WalletBackup.json"
 
-    // Present exporter/importer AFTER closing backup sheet
     @State private var pendingExportAfterSheetDismiss = false
     @State private var pendingImportAfterSheetDismiss = false
 
@@ -41,26 +40,22 @@ struct DashboardScreen: View {
         _vm = StateObject(wrappedValue: DashboardViewModel(modelContext: modelContext))
     }
 
-    // CREDIT: total spent (this account only)
+    // Each account card shows spending within its own billing cycle (current period)
     private var totalSpentByAccountId: [UUID: Decimal] {
         var dict: [UUID: Decimal] = [:]
-
-        let creditAccountIds = Set(vm.accounts.filter { $0.type == .credit }.map(\.id))
-
-        for txn in vm.transactions where txn.type == .expense && creditAccountIds.contains(txn.accountId) {
-            dict[txn.accountId, default: 0] += txn.amount
-        }
-
         for acct in vm.accounts {
-            dict[acct.id] = dict[acct.id] ?? 0
+            dict[acct.id] = vm.periodExpenses(for: acct.id, monthOffset: 0)
         }
-
         return dict
     }
 
-    // Subtitle removed (per your request)
+    // Subtitle shows the billing period date range
     private var subtitleByAccountId: [UUID: String] {
-        Dictionary(uniqueKeysWithValues: vm.accounts.map { ($0.id, "") })
+        var dict: [UUID: String] = [:]
+        for acct in vm.accounts {
+            dict[acct.id] = vm.billingPeriodLabel(for: acct, monthOffset: 0)
+        }
+        return dict
     }
 
     private var totalCards: Int { vm.accounts.count + 1 }
@@ -69,7 +64,6 @@ struct DashboardScreen: View {
         AccountsPagerView.pageCount(totalCards: totalCards, maxPerPage: maxPerPage)
     }
 
-    // Recent Transactions: show ALL
     private var filteredTransactions: [Transaction] {
         vm.transactions.sorted { $0.date > $1.date }
     }
@@ -81,6 +75,10 @@ struct DashboardScreen: View {
 
                 VStack(spacing: 18) {
                     topBar
+
+                    // ── Monthly Spending Card ──
+                    MonthlySpendingCardView(vm: vm)
+                        .padding(.horizontal, 18)
 
                     AccountsPagerView(
                         accounts: vm.accounts,
@@ -113,13 +111,14 @@ struct DashboardScreen: View {
                 AccountDetailScreen(vm: vm, accountId: acct.id)
             }
             .sheet(isPresented: $showAddAccount) {
-                AddAccountScreen(vm: vm) { bank, account, amount, type, credit, pooled in
+                AddAccountScreen(vm: vm) { bank, account, amount, type, credit, pooled, billingDay in
                     vm.addAccount(bankName: bank,
                                   accountName: account,
                                   amount: amount,
                                   type: type,
                                   currentCredit: credit,
-                                  isInCombinedCreditPool: pooled)
+                                  isInCombinedCreditPool: pooled,
+                                  billingCycleStartDay: billingDay)
                 }
             }
             .sheet(isPresented: $showAddTransaction) {
@@ -129,7 +128,6 @@ struct DashboardScreen: View {
                 backupSheet
             }
 
-            // Exporter / Importer must be attached to the main screen (not inside the sheet)
             .fileExporter(isPresented: $showExporter,
                           document: exportDocument,
                           contentType: .json,
@@ -138,25 +136,25 @@ struct DashboardScreen: View {
                     presentError(err)
                 }
             }
-          .fileImporter(isPresented: $showImporter,
-                        allowedContentTypes: [.json],
-                        allowsMultipleSelection: false) { result in
-              do {
-                  let urls = try result.get()
-                  guard let url = urls.first else { return }
+            .fileImporter(isPresented: $showImporter,
+                          allowedContentTypes: [.json],
+                          allowsMultipleSelection: false) { result in
+                do {
+                    let urls = try result.get()
+                    guard let url = urls.first else { return }
 
-                  let didStart = url.startAccessingSecurityScopedResource()
-                  defer {
-                      if didStart { url.stopAccessingSecurityScopedResource() }
-                  }
+                    let didStart = url.startAccessingSecurityScopedResource()
+                    defer {
+                        if didStart { url.stopAccessingSecurityScopedResource() }
+                    }
 
-                  let data = try Data(contentsOf: url)
-                  pendingImportData = data
-                  showImportStrategyDialog = true
-              } catch {
-                  presentError(error)
-              }
-          }
+                    let data = try Data(contentsOf: url)
+                    pendingImportData = data
+                    showImportStrategyDialog = true
+                } catch {
+                    presentError(error)
+                }
+            }
 
             .confirmationDialog("Import backup",
                                 isPresented: $showImportStrategyDialog,
@@ -197,6 +195,8 @@ struct DashboardScreen: View {
         }
     }
 
+    // MARK: - Top Bar
+
     private var topBar: some View {
         HStack {
             Spacer()
@@ -218,6 +218,8 @@ struct DashboardScreen: View {
         .padding(.horizontal, 18)
         .padding(.top, 6)
     }
+
+    // MARK: - Recent Transactions
 
     private var recentTransactions: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -256,6 +258,8 @@ struct DashboardScreen: View {
             }
         }
     }
+
+    // MARK: - Transaction Row
 
     private func transactionRow(_ txn: Transaction) -> some View {
         let isExpense = txn.type == .expense
@@ -309,6 +313,8 @@ struct DashboardScreen: View {
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 14).fill(Color(white: 0.14)))
     }
+
+    // MARK: - Backup Sheet
 
     private var backupSheet: some View {
         NavigationStack {
@@ -370,6 +376,8 @@ struct DashboardScreen: View {
             }
         }
     }
+
+    // MARK: - Helpers
 
     private func runImport(strategy: WalletImportStrategy) {
         guard let data = pendingImportData else { return }
