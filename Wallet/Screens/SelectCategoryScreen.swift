@@ -6,15 +6,41 @@
 //
 
 import SwiftUI
+import SwiftData
+
+struct CategoryItem: Identifiable, Hashable {
+    let id: String
+    let name: String
+    let icon: String
+}
 
 struct SelectCategoryScreen: View {
     let transactionType: TransactionType
-    let onSelect: (TransactionCategory) -> Void
+    let onSelect: (CategoryItem) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appTheme) private var theme
+    @AppStorage("theme_is_dark") private var themeIsDark: Bool = true
+    @Query(sort: [SortDescriptor(\CustomCategory.name)]) private var customCategories: [CustomCategory]
+    @State private var showAddCustom: Bool = false
 
-    private var categories: [TransactionCategory] {
-        transactionType == .expense ? TransactionCategory.expenseCategories : TransactionCategory.incomeCategories
+    private var categories: [CategoryItem] {
+        let builtIns = (transactionType == .expense
+            ? TransactionCategory.expenseCategories
+            : TransactionCategory.incomeCategories)
+            .map { CategoryItem(id: $0.rawValue, name: $0.rawValue, icon: $0.iconSystemName) }
+
+        if transactionType == .expense {
+            let custom = customCategories
+                .filter { $0.kind == .expense }
+                .map { CategoryItem(id: $0.id.uuidString, name: $0.name, icon: $0.iconSystemName) }
+            return custom + builtIns
+        }
+
+        let custom = customCategories
+            .filter { $0.kind == .income }
+            .map { CategoryItem(id: $0.id.uuidString, name: $0.name, icon: $0.iconSystemName) }
+        return custom + builtIns
     }
 
     private let columns: [GridItem] = [
@@ -26,7 +52,7 @@ struct SelectCategoryScreen: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.black.ignoresSafeArea()
+                theme.backgroundGradient.ignoresSafeArea()
 
                 ScrollView {
                     LazyVGrid(columns: columns, spacing: 14) {
@@ -37,23 +63,23 @@ struct SelectCategoryScreen: View {
                             } label: {
                                 VStack(spacing: 10) {
                                     Circle()
-                                        .fill(Color.blue.opacity(0.2))
+                                        .fill(theme.accentSoft)
                                         .frame(width: 50, height: 50)
                                         .overlay(
-                                            Image(systemName: category.iconSystemName)
+                                            Image(systemName: category.icon)
                                                 .font(.system(size: 22))
-                                                .foregroundStyle(.blue)
+                                                .foregroundStyle(theme.accent)
                                         )
 
-                                    Text(category.rawValue)
+                                    Text(category.name)
                                         .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(.white.opacity(0.7))
+                                        .foregroundStyle(theme.textSecondary)
                                         .multilineTextAlignment(.center)
                                         .lineLimit(2)
                                 }
                                 .frame(maxWidth: .infinity)
                                 .padding(.vertical, 12)
-                                .background(RoundedRectangle(cornerRadius: 14).fill(Color(white: 0.14)))
+                                .background(RoundedRectangle(cornerRadius: 14).fill(theme.surfaceAlt))
                             }
                             .buttonStyle(.plain)
                         }
@@ -63,12 +89,25 @@ struct SelectCategoryScreen: View {
             }
             .navigationTitle("Select Category")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(themeIsDark ? .dark : .light, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
-                        .foregroundStyle(.white)
+                        .foregroundStyle(theme.textPrimary)
                 }
+                if transactionType == .expense || transactionType == .income {
+                    ToolbarItem(placement: .confirmationAction) {
+                        Button {
+                            showAddCustom = true
+                        } label: {
+                            Image(systemName: "plus")
+                                .foregroundStyle(theme.textPrimary)
+                        }
+                    }
+                }
+            }
+            .sheet(isPresented: $showAddCustom) {
+                AddCustomCategorySheet(kind: transactionType == .expense ? .expense : .income)
             }
         }
     }

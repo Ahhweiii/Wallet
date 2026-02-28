@@ -25,6 +25,7 @@ struct AccountsPagerView: View {
     let subtitleByAccountId: [UUID: String]
     @Binding var pageIndex: Int
     let maxPerPage: Int
+    let canAddAccount: Bool
     let onAddAccount: () -> Void
     let onTapAccount: (Account) -> Void
 
@@ -61,7 +62,7 @@ struct AccountsPagerView: View {
                             }
 
                         case .addAccount:
-                            AddAccountCardView(onTap: onAddAccount)
+                            AddAccountCardView(isEnabled: canAddAccount, onTap: onAddAccount)
                                 .frame(height: cardHeight)
                         }
                     }

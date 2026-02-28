@@ -7,13 +7,20 @@ import SwiftUI
 
 struct MonthlySpendingCardView: View {
     @ObservedObject var vm: DashboardViewModel
+    @Environment(\.appTheme) private var theme
     @State private var monthOffset: Int = 0
-    @State private var showBreakdown: Bool = false
+    @Binding var showBreakdown: Bool
+
+    init(vm: DashboardViewModel, showBreakdown: Binding<Bool>) {
+        self.vm = vm
+        self._showBreakdown = showBreakdown
+    }
 
     let minOffset: Int = -2
 
     private var canGoBack: Bool { monthOffset > minOffset }
     private var canGoForward: Bool { monthOffset < 0 }
+    private var hasCreditAccounts: Bool { vm.accounts.contains { $0.type == .credit } }
 
     var body: some View {
         VStack(spacing: 12) {
@@ -26,7 +33,7 @@ struct MonthlySpendingCardView: View {
                 } label: {
                     Image(systemName: "chevron.left")
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(canGoBack ? .white : .white.opacity(0.2))
+                        .foregroundStyle(canGoBack ? theme.textPrimary : theme.textTertiary)
                 }
                 .disabled(!canGoBack)
                 .buttonStyle(.plain)
@@ -35,12 +42,14 @@ struct MonthlySpendingCardView: View {
 
                 VStack(spacing: 2) {
                     Text(periodTitle)
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white)
+                        .font(.custom("Avenir Next", size: 14).weight(.bold))
+                        .foregroundStyle(theme.textPrimary)
 
-                    Text("Each account uses its own billing cycle")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.35))
+                    if hasCreditAccounts {
+                        Text("Credit uses billing cycle")
+                            .font(.custom("Avenir Next", size: 10).weight(.semibold))
+                            .foregroundStyle(theme.textTertiary)
+                    }
                 }
 
                 Spacer()
@@ -52,7 +61,7 @@ struct MonthlySpendingCardView: View {
                 } label: {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(canGoForward ? .white : .white.opacity(0.2))
+                        .foregroundStyle(canGoForward ? theme.textPrimary : theme.textTertiary)
                 }
                 .disabled(!canGoForward)
                 .buttonStyle(.plain)
@@ -65,22 +74,22 @@ struct MonthlySpendingCardView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.up.circle.fill")
                             .font(.system(size: 12))
-                            .foregroundStyle(.red)
+                            .foregroundStyle(theme.negative)
                         Text("Spent")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.5))
+                            .font(.custom("Avenir Next", size: 11).weight(.semibold))
+                            .foregroundStyle(theme.textSecondary)
                     }
 
                     Text(CurrencyFormatter.sgd(amount: vm.totalPeriodExpenses(monthOffset: monthOffset)))
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(.red)
+                        .font(.custom("Avenir Next", size: 20).weight(.bold))
+                        .foregroundStyle(theme.negative)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                 }
 
                 // Divider
                 Rectangle()
-                    .fill(.white.opacity(0.1))
+                    .fill(theme.divider)
                     .frame(width: 1, height: 36)
 
                 // Income
@@ -88,15 +97,15 @@ struct MonthlySpendingCardView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.down.circle.fill")
                             .font(.system(size: 12))
-                            .foregroundStyle(.green)
+                            .foregroundStyle(theme.positive)
                         Text("Income")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.5))
+                            .font(.custom("Avenir Next", size: 11).weight(.semibold))
+                            .foregroundStyle(theme.textSecondary)
                     }
 
                     Text(CurrencyFormatter.sgd(amount: vm.totalPeriodIncome(monthOffset: monthOffset)))
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(.green)
+                        .font(.custom("Avenir Next", size: 20).weight(.bold))
+                        .foregroundStyle(theme.positive)
                         .lineLimit(1)
                         .minimumScaleFactor(0.7)
                 }
@@ -112,11 +121,11 @@ struct MonthlySpendingCardView: View {
                 } label: {
                     HStack(spacing: 4) {
                         Text(showBreakdown ? "Hide Breakdown" : "Show Breakdown")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.45))
+                            .font(.custom("Avenir Next", size: 11).weight(.semibold))
+                            .foregroundStyle(theme.textSecondary)
                         Image(systemName: showBreakdown ? "chevron.up" : "chevron.down")
                             .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.45))
+                            .foregroundStyle(theme.textSecondary)
                     }
                 }
                 .buttonStyle(.plain)
@@ -139,13 +148,15 @@ struct MonthlySpendingCardView: View {
                             // Account name + period
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(account.displayName)
-                                    .font(.system(size: 12, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.8))
+                                    .font(.custom("Avenir Next", size: 12).weight(.semibold))
+                                    .foregroundStyle(theme.textPrimary)
                                     .lineLimit(1)
 
-                                Text(periodLabel)
-                                    .font(.system(size: 10, weight: .regular))
-                                    .foregroundStyle(.white.opacity(0.35))
+                                if account.type == .credit {
+                                    Text(periodLabel)
+                                        .font(.custom("Avenir Next", size: 10))
+                                        .foregroundStyle(theme.textTertiary)
+                                }
                             }
 
                             Spacer()
@@ -154,22 +165,22 @@ struct MonthlySpendingCardView: View {
                             VStack(alignment: .trailing, spacing: 2) {
                                 if spent > 0 {
                                     Text("−\(CurrencyFormatter.sgd(amount: spent))")
-                                        .font(.system(size: 12, weight: .bold))
-                                        .foregroundStyle(.red)
+                                        .font(.custom("Avenir Next", size: 12).weight(.bold))
+                                        .foregroundStyle(theme.negative)
                                         .lineLimit(1)
                                 }
 
                                 if income > 0 {
                                     Text("+\(CurrencyFormatter.sgd(amount: income))")
-                                        .font(.system(size: 12, weight: .bold))
-                                        .foregroundStyle(.green)
+                                        .font(.custom("Avenir Next", size: 12).weight(.bold))
+                                        .foregroundStyle(theme.positive)
                                         .lineLimit(1)
                                 }
 
                                 if spent == 0 && income == 0 {
                                     Text("No activity")
-                                        .font(.system(size: 11, weight: .semibold))
-                                        .foregroundStyle(.white.opacity(0.25))
+                                        .font(.custom("Avenir Next", size: 11).weight(.semibold))
+                                        .foregroundStyle(theme.textTertiary)
                                 }
                             }
                         }
@@ -177,7 +188,7 @@ struct MonthlySpendingCardView: View {
                         .padding(.horizontal, 10)
                         .background(
                             RoundedRectangle(cornerRadius: 10)
-                                .fill(Color(white: 0.18))
+                                .fill(theme.surfaceAlt)
                         )
                     }
                 }
@@ -187,7 +198,8 @@ struct MonthlySpendingCardView: View {
         .padding(16)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(white: 0.14).opacity(0.95))
+                .fill(theme.surface)
+                .shadow(color: theme.shadow, radius: 10, x: 0, y: 6)
         )
     }
 

@@ -9,6 +9,7 @@ import SwiftUI
 
 struct BottomTabBarView: View {
     @Binding var selectedTab: Int
+    @Environment(\.appTheme) private var theme
 
     var body: some View {
         HStack(spacing: 0) {
@@ -20,11 +21,11 @@ struct BottomTabBarView: View {
         .padding(10)
         .background(
             Capsule(style: .continuous)
-                .fill(Color(white: 0.10).opacity(0.95))
+                .fill(theme.surface)
         )
         .overlay(
             Capsule(style: .continuous)
-                .stroke(Color.white.opacity(0.06), lineWidth: 1)
+                .stroke(theme.divider, lineWidth: 1)
         )
     }
 
@@ -38,7 +39,7 @@ struct BottomTabBarView: View {
                 Text(title)
                     .font(.system(size: 11, weight: .semibold))
             }
-            .foregroundStyle(selectedTab == index ? Color.blue : Color.white.opacity(0.75))
+            .foregroundStyle(selectedTab == index ? theme.accent : theme.textSecondary)
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
             .contentShape(Rectangle())

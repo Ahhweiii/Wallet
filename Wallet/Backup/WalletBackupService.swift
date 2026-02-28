@@ -31,10 +31,15 @@ enum WalletBackupService {
 
     // ✅ MainActor because we read SwiftData @Model objects
     @MainActor
-    static func exportJSON(accounts: [Account], transactions: [Transaction]) throws -> Data {
+    static func exportJSON(accounts: [Account],
+                           transactions: [Transaction],
+                           fixedPayments: [FixedPayment] = [],
+                           customCategories: [CustomCategory] = []) throws -> Data {
         let file = WalletBackupFile(
             accounts: accounts.map(AccountDTO.init(from:)),
-            transactions: transactions.map(TransactionDTO.init(from:))
+            transactions: transactions.map(TransactionDTO.init(from:)),
+            fixedPayments: fixedPayments.map(FixedPaymentDTO.init(from:)),
+            customCategories: customCategories.map(CustomCategoryDTO.init(from:))
         )
 
         let encoder = JSONEncoder()
@@ -64,9 +69,13 @@ enum WalletBackupService {
 
         let existingAccounts = try modelContext.fetch(FetchDescriptor<Account>())
         let existingTransactions = try modelContext.fetch(FetchDescriptor<Transaction>())
+        let existingFixed = try modelContext.fetch(FetchDescriptor<FixedPayment>())
+        let existingCustom = try modelContext.fetch(FetchDescriptor<CustomCategory>())
 
         var accountById: [UUID: Account] = Dictionary(uniqueKeysWithValues: existingAccounts.map { ($0.id, $0) })
         var txnById: [UUID: Transaction] = Dictionary(uniqueKeysWithValues: existingTransactions.map { ($0.id, $0) })
+        var fixedById: [UUID: FixedPayment] = Dictionary(uniqueKeysWithValues: existingFixed.map { ($0.id, $0) })
+        var customById: [UUID: CustomCategory] = Dictionary(uniqueKeysWithValues: existingCustom.map { ($0.id, $0) })
 
         for dto in file.accounts {
             if let existing = accountById[dto.id] {
@@ -78,6 +87,7 @@ enum WalletBackupService {
                 existing.colorHex = dto.colorHex
                 existing.iconSystemName = dto.iconSystemName
                 existing.isInCombinedCreditPool = dto.isInCombinedCreditPool
+                existing.billingCycleStartDay = dto.billingCycleStartDay
             } else {
                 let new = Account(
                     id: dto.id,
@@ -88,7 +98,8 @@ enum WalletBackupService {
                     type: dto.type,
                     colorHex: dto.colorHex,
                     iconSystemName: dto.iconSystemName,
-                    isInCombinedCreditPool: dto.isInCombinedCreditPool
+                    isInCombinedCreditPool: dto.isInCombinedCreditPool,
+                    billingCycleStartDay: dto.billingCycleStartDay
                 )
                 modelContext.insert(new)
                 accountById[dto.id] = new
@@ -100,7 +111,8 @@ enum WalletBackupService {
                 existing.type = dto.type
                 existing.amount = dto.amount
                 existing.accountId = dto.accountId
-                existing.category = dto.category
+                existing.categoryName = dto.categoryName
+                existing.category = TransactionCategory.from(name: dto.categoryName)
                 existing.date = dto.date
                 existing.note = dto.note
             } else {
@@ -109,12 +121,61 @@ enum WalletBackupService {
                     type: dto.type,
                     amount: dto.amount,
                     accountId: dto.accountId,
-                    category: dto.category,
+                    categoryName: dto.categoryName,
+                    category: TransactionCategory.from(name: dto.categoryName),
                     date: dto.date,
                     note: dto.note
                 )
                 modelContext.insert(new)
                 txnById[dto.id] = new
+            }
+        }
+
+        if let fixedPayments = file.fixedPayments {
+            for dto in fixedPayments {
+                if let existing = fixedById[dto.id] {
+                    existing.name = dto.name
+                    existing.amount = dto.amount
+                    existing.type = dto.type
+                    existing.typeName = dto.typeName
+                    existing.frequency = dto.frequency
+                    existing.startDate = dto.startDate
+                    existing.endDate = dto.endDate
+                    existing.cycles = dto.cycles
+                    existing.note = dto.note
+                } else {
+                    let new = FixedPayment(
+                        id: dto.id,
+                        name: dto.name,
+                        amount: dto.amount,
+                        type: dto.type,
+                        typeName: dto.typeName,
+                        frequency: dto.frequency,
+                        startDate: dto.startDate,
+                        endDate: dto.endDate,
+                        cycles: dto.cycles,
+                        note: dto.note
+                    )
+                    modelContext.insert(new)
+                    fixedById[dto.id] = new
+                }
+            }
+        }
+
+        if let customCategories = file.customCategories {
+            for dto in customCategories {
+                if let existing = customById[dto.id] {
+                    existing.name = dto.name
+                    existing.kind = dto.kind
+                    existing.iconSystemName = dto.iconSystemName
+                } else {
+                    let new = CustomCategory(id: dto.id,
+                                             name: dto.name,
+                                             kind: dto.kind,
+                                             iconSystemName: dto.iconSystemName)
+                    modelContext.insert(new)
+                    customById[dto.id] = new
+                }
             }
         }
 
@@ -128,6 +189,12 @@ enum WalletBackupService {
 
         let accts = try modelContext.fetch(FetchDescriptor<Account>())
         for a in accts { modelContext.delete(a) }
+
+        let fixed = try modelContext.fetch(FetchDescriptor<FixedPayment>())
+        for f in fixed { modelContext.delete(f) }
+
+        let custom = try modelContext.fetch(FetchDescriptor<CustomCategory>())
+        for c in custom { modelContext.delete(c) }
 
         try modelContext.save()
     }

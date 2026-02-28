@@ -12,6 +12,8 @@ struct AccountDetailScreen: View {
     let accountId: UUID
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appTheme) private var theme
+    @AppStorage("theme_is_dark") private var themeIsDark: Bool = true
 
     @State private var showEditSheet: Bool = false
     @State private var showDeleteConfirm: Bool = false
@@ -48,7 +50,7 @@ struct AccountDetailScreen: View {
 
     var body: some View {
         ZStack {
-            Color.black.ignoresSafeArea()
+            theme.backgroundGradient.ignoresSafeArea()
 
             if let account = account {
                 List {
@@ -77,10 +79,10 @@ struct AccountDetailScreen: View {
                             VStack(spacing: 10) {
                                 Image(systemName: "tray")
                                     .font(.system(size: 34))
-                                    .foregroundStyle(.white.opacity(0.2))
+                                    .foregroundStyle(theme.textTertiary)
                                 Text("No transactions yet")
                                     .font(.system(size: 14, weight: .semibold))
-                                    .foregroundStyle(.white.opacity(0.3))
+                                    .foregroundStyle(theme.textSecondary)
                             }
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 24)
@@ -102,7 +104,7 @@ struct AccountDetailScreen: View {
                     } header: {
                         Text("Transactions (This Card)")
                             .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(theme.textPrimary)
                             .textCase(nil)
                     }
                 }
@@ -111,25 +113,25 @@ struct AccountDetailScreen: View {
                 .background(Color.clear)
             } else {
                 Text("Account not found")
-                    .foregroundStyle(.white.opacity(0.5))
+                    .foregroundStyle(theme.textSecondary)
             }
         }
         .navigationTitle("")
         .navigationBarTitleDisplayMode(.inline)
-        .toolbarColorScheme(.dark, for: .navigationBar)
+        .toolbarColorScheme(themeIsDark ? .dark : .light, for: .navigationBar)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 if account != nil {
                     HStack {
                         Button("Edit") { showEditSheet = true }
-                            .foregroundStyle(.blue)
+                            .foregroundStyle(theme.accent)
 
                         Button {
                             showDeleteConfirm = true
                         } label: {
                             Image(systemName: "trash")
                         }
-                        .foregroundStyle(.red)
+                        .foregroundStyle(theme.negative)
                     }
                 }
             }
@@ -148,7 +150,7 @@ struct AccountDetailScreen: View {
         }
         .sheet(isPresented: $showEditSheet) {
             if let account = account {
-                EditAccountScreen(vm: vm, account: account) { bank, acctName, amount, type, credit, pooled, billingDay in
+                EditAccountScreen(vm: vm, account: account) { bank, acctName, amount, type, credit, pooled, billingDay, colorHex in
                     vm.updateAccount(id: accountId,
                                      bankName: bank,
                                      accountName: acctName,
@@ -156,7 +158,8 @@ struct AccountDetailScreen: View {
                                      type: type,
                                      currentCredit: credit,
                                      isInCombinedCreditPool: pooled,
-                                     billingCycleStartDay: billingDay)
+                                     billingCycleStartDay: billingDay,
+                                     colorHex: colorHex)
                 }
             }
         }
@@ -175,14 +178,14 @@ struct AccountDetailScreen: View {
 
             Text(account.displayName)
                 .font(.system(size: 22, weight: .bold))
-                .foregroundStyle(.white)
+                .foregroundStyle(theme.textPrimary)
 
             Text(account.type.rawValue)
                 .font(.system(size: 13, weight: .bold))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(theme.textTertiary)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 4)
-                .background(Capsule().fill(Color.white.opacity(0.08)))
+                .background(Capsule().fill(theme.surfaceAlt))
         }
         .padding(.top, 14)
         .padding(.bottom, 10)
@@ -193,20 +196,20 @@ struct AccountDetailScreen: View {
             HStack {
                 Text("Credit")
                     .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(theme.textPrimary)
                 Spacer()
             }
 
-            Divider().overlay(Color.white.opacity(0.08))
+            Divider().overlay(theme.divider)
 
             HStack {
                 VStack(alignment: .leading, spacing: 6) {
                     Text("Total Credit")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(theme.textSecondary)
                     Text(CurrencyFormatter.sgd(amount: totalCreditToDisplay))
                         .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(theme.textPrimary)
                 }
 
                 Spacer()
@@ -214,21 +217,21 @@ struct AccountDetailScreen: View {
                 VStack(alignment: .trailing, spacing: 6) {
                     Text("Available Credit")
                         .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.5))
+                        .foregroundStyle(theme.textSecondary)
                     Text(CurrencyFormatter.sgd(amount: availableCreditToDisplay))
                         .font(.system(size: 18, weight: .bold))
-                        .foregroundStyle(.white)
+                        .foregroundStyle(theme.textPrimary)
                 }
             }
 
             if let info = pooledInfoText {
                 Text(info)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.35))
+                    .foregroundStyle(theme.textTertiary)
             }
         }
         .padding(18)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color(white: 0.14)))
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(theme.card))
     }
 
     private var totalSummaryCard: some View {
@@ -236,61 +239,62 @@ struct AccountDetailScreen: View {
             HStack {
                 Text("Total Summary (This Card)")
                     .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(theme.textPrimary)
                 Spacer()
             }
 
-            Divider().overlay(Color.white.opacity(0.08))
+            Divider().overlay(theme.divider)
 
             Text("Total Spent")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(theme.textSecondary)
 
             Text(CurrencyFormatter.sgd(amount: totalSpentThisAccount))
                 .font(.system(size: 36, weight: .bold))
-                .foregroundStyle(.red)
+                .foregroundStyle(theme.negative)
         }
         .padding(18)
-        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(Color(white: 0.14)))
+        .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(theme.card))
     }
 
     private func transactionRow(_ txn: Transaction) -> some View {
         let isExpense = txn.type == .expense
+        let categoryName = txn.categoryName.isEmpty ? (txn.category?.rawValue ?? "Other") : txn.categoryName
 
         return HStack(spacing: 14) {
             Circle()
-                .fill((isExpense ? Color.red : Color.green).opacity(0.15))
+                .fill((isExpense ? theme.negative : theme.positive).opacity(0.12))
                 .frame(width: 40, height: 40)
                 .overlay(
-                    Image(systemName: txn.category.iconSystemName)
+                    Image(systemName: TransactionCategory.iconSystemName(for: categoryName))
                         .font(.system(size: 16))
-                        .foregroundStyle(isExpense ? .red : .green)
+                        .foregroundStyle(isExpense ? theme.negative : theme.positive)
                 )
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(txn.category.rawValue)
+                Text(categoryName)
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(theme.textPrimary)
 
                 if !txn.note.isEmpty {
                     Text(txn.note)
                         .font(.system(size: 12))
-                        .foregroundStyle(.white.opacity(0.4))
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
                 }
 
                 Text(txn.date, style: .date)
                     .font(.system(size: 11))
-                    .foregroundStyle(.white.opacity(0.3))
+                    .foregroundStyle(theme.textTertiary)
             }
 
             Spacer()
 
             Text("\(isExpense ? "−" : "+")\(CurrencyFormatter.sgd(amount: txn.amount))")
                 .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(isExpense ? .red : .green)
+                .foregroundStyle(isExpense ? theme.negative : theme.positive)
         }
         .padding(14)
-        .background(RoundedRectangle(cornerRadius: 14).fill(Color(white: 0.14)))
+        .background(RoundedRectangle(cornerRadius: 14).fill(theme.card))
     }
 }

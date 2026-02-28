@@ -12,56 +12,43 @@ struct AccountCardView: View {
     let totalSpent: Decimal
     let subtitle: String
     let onTap: () -> Void
+    @Environment(\.appTheme) private var theme
+    private let headerHeight: CGFloat = 34
 
     var body: some View {
         Button(action: onTap) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(Color(hex: account.colorHex).opacity(0.95))
-                        .frame(width: 28, height: 28)
-                        .overlay(
-                            Image(systemName: account.iconSystemName)
-                                .font(.system(size: 14, weight: .semibold))
-                                .foregroundStyle(.white)
-                        )
+            HStack(alignment: .top, spacing: 10) {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color(hex: account.colorHex).opacity(0.95))
+                    .frame(width: 32, height: 32)
+                    .overlay(
+                        Image(systemName: account.iconSystemName)
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(.white)
+                    )
 
-                    Spacer()
-
-                    Text(account.type.rawValue)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.5))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Capsule().fill(Color.white.opacity(0.08)))
-                }
-
-                Text(account.displayName)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.55))
-                    .lineLimit(1)
-
-                Text(CurrencyFormatter.sgd(amount: totalSpent))
-                    .font(.system(size: 18, weight: .bold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-
-                if !subtitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    Text(subtitle)
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.45))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(account.displayName)
+                        .font(.custom("Avenir Next", size: 12).weight(.semibold))
+                        .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
+
+                    Text(CurrencyFormatter.sgd(amount: totalSpent))
+                        .font(.custom("Avenir Next", size: 20).weight(.bold))
+                        .foregroundStyle(theme.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
                 }
 
                 Spacer(minLength: 0)
             }
             .padding(12)
             .frame(maxWidth: .infinity)
-            .frame(height: 92)
+            .frame(height: 80)
             .background(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color(white: 0.14).opacity(0.95))
+                    .fill(theme.card)
+                    .shadow(color: theme.shadow, radius: 10, x: 0, y: 6)
             )
         }
         .buttonStyle(.plain)

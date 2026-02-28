@@ -10,30 +10,33 @@ import SwiftUI
 struct AddTransactionScreen: View {
     @ObservedObject var vm: DashboardViewModel
     let onDone: () -> Void
+    @Environment(\.appTheme) private var theme
+    @AppStorage("theme_is_dark") private var themeIsDark: Bool = true
 
     @Environment(\.dismiss) private var dismiss
 
     @State private var selectedType: TransactionType = .expense
     @State private var amountText: String = ""
     @State private var selectedAccount: Account? = nil
-    @State private var selectedCategory: TransactionCategory? = nil
+    @State private var selectedCategory: CategoryItem? = nil
     @State private var selectedDate: Date = Date()
     @State private var note: String = ""
 
     @State private var showSelectAccount: Bool = false
     @State private var showSelectCategory: Bool = false
+    @State private var showLimitAlert: Bool = false
 
     private var isValid: Bool {
         guard let amt = Decimal(string: amountText), amt > 0 else { return false }
         return selectedAccount != nil && selectedCategory != nil
     }
 
-    private var displayColor: Color { selectedType == .expense ? .red : .green }
+    private var displayColor: Color { selectedType == .expense ? theme.negative : theme.positive }
 
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.black.ignoresSafeArea()
+                theme.backgroundGradient.ignoresSafeArea()
 
                 VStack(spacing: 0) {
                     typeTabs.padding(.top, 10)
@@ -55,15 +58,20 @@ struct AddTransactionScreen: View {
             }
             .navigationTitle("New Transaction")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(themeIsDark ? .dark : .light, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
-                        .foregroundStyle(.white)
+                        .foregroundStyle(theme.textPrimary)
                 }
             }
             .safeAreaInset(edge: .bottom) {
                 saveBar
+            }
+            .alert("Limit Reached", isPresented: $showLimitAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("Free tier allows \(SubscriptionManager.freeMonthlyTransactionLimit) transactions per month. Upgrade to Pro for unlimited transactions.")
             }
             .sheet(isPresented: $showSelectAccount) {
                 SelectAccountScreen(accounts: vm.accounts) { selectedAccount = $0 }
@@ -84,10 +92,10 @@ struct AddTransactionScreen: View {
                     VStack(spacing: 8) {
                         Text(type.rawValue)
                             .font(.system(size: 16, weight: .bold))
-                            .foregroundStyle(selectedType == type ? .white : .white.opacity(0.4))
+                            .foregroundStyle(selectedType == type ? theme.textPrimary : theme.textTertiary)
 
                         Rectangle()
-                            .fill(selectedType == type ? (type == .expense ? .red : .green) : .clear)
+                            .fill(selectedType == type ? (type == .expense ? theme.negative : theme.positive) : .clear)
                             .frame(height: 3)
                             .cornerRadius(2)
                     }
@@ -103,7 +111,7 @@ struct AddTransactionScreen: View {
         VStack(spacing: 12) {
             Text(selectedType == .expense ? "How much did you spend?" : "How much did you receive?")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.5))
+                .foregroundStyle(theme.textSecondary)
 
             HStack(spacing: 6) {
                 Text(selectedType == .expense ? "−" : "+")
@@ -127,7 +135,7 @@ struct AddTransactionScreen: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Account")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(theme.textSecondary)
 
             Button { showSelectAccount = true } label: {
                 HStack {
@@ -142,20 +150,20 @@ struct AddTransactionScreen: View {
                             )
                         Text(acct.displayName)
                             .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(theme.textPrimary)
                     } else {
-                        Image(systemName: "creditcard").foregroundStyle(.white.opacity(0.4))
+                        Image(systemName: "creditcard").foregroundStyle(theme.textTertiary)
                         Text("Select Account")
                             .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.4))
+                            .foregroundStyle(theme.textTertiary)
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.3))
+                        .foregroundStyle(theme.textTertiary)
                 }
                 .padding(14)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color(white: 0.14)))
+                .background(RoundedRectangle(cornerRadius: 12).fill(theme.surfaceAlt))
             }
             .buttonStyle(.plain)
         }
@@ -165,7 +173,7 @@ struct AddTransactionScreen: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Category")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(theme.textSecondary)
 
             Button { showSelectCategory = true } label: {
                 HStack {
@@ -174,26 +182,26 @@ struct AddTransactionScreen: View {
                             .fill(Color.blue.opacity(0.2))
                             .frame(width: 32, height: 32)
                             .overlay(
-                                Image(systemName: cat.iconSystemName)
+                                Image(systemName: cat.icon)
                                     .font(.system(size: 14))
                                     .foregroundStyle(.blue)
                             )
-                        Text(cat.rawValue)
+                        Text(cat.name)
                             .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(theme.textPrimary)
                     } else {
-                        Image(systemName: "square.grid.2x2").foregroundStyle(.white.opacity(0.4))
+                        Image(systemName: "square.grid.2x2").foregroundStyle(theme.textTertiary)
                         Text("Select Category")
                             .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.4))
+                            .foregroundStyle(theme.textTertiary)
                     }
                     Spacer()
                     Image(systemName: "chevron.right")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.3))
+                        .foregroundStyle(theme.textTertiary)
                 }
                 .padding(14)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color(white: 0.14)))
+                .background(RoundedRectangle(cornerRadius: 12).fill(theme.surfaceAlt))
             }
             .buttonStyle(.plain)
         }
@@ -203,14 +211,14 @@ struct AddTransactionScreen: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Date & Time")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(theme.textSecondary)
 
             DatePicker("", selection: $selectedDate, displayedComponents: [.date, .hourAndMinute])
                 .labelsHidden()
-                .tint(.blue)
+                .tint(theme.accent)
                 .padding(14)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color(white: 0.14)))
-                .colorScheme(.dark)
+                .background(RoundedRectangle(cornerRadius: 12).fill(theme.surfaceAlt))
+                .colorScheme(themeIsDark ? .dark : .light)
         }
     }
 
@@ -218,12 +226,12 @@ struct AddTransactionScreen: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Note (optional)")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(theme.textSecondary)
 
             TextField("e.g. Lunch", text: $note)
                 .padding(14)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color(white: 0.14)))
-                .foregroundStyle(.white)
+                .background(RoundedRectangle(cornerRadius: 12).fill(theme.surfaceAlt))
+                .foregroundStyle(theme.textPrimary)
         }
     }
 
@@ -233,14 +241,18 @@ struct AddTransactionScreen: View {
                   let acct = selectedAccount,
                   let cat = selectedCategory else { return }
 
-            vm.addTransaction(type: selectedType,
-                              amount: amt,
-                              accountId: acct.id,
-                              category: cat,
-                              date: selectedDate,
-                              note: note.trimmingCharacters(in: .whitespacesAndNewlines))
-            onDone()
-            dismiss()
+            let added = vm.addTransaction(type: selectedType,
+                                          amount: amt,
+                                          accountId: acct.id,
+                                          categoryName: cat.name,
+                                          date: selectedDate,
+                                          note: note.trimmingCharacters(in: .whitespacesAndNewlines))
+            if added {
+                onDone()
+                dismiss()
+            } else {
+                showLimitAlert = true
+            }
         } label: {
             Text("Save Transaction")
                 .font(.system(size: 18, weight: .bold))
@@ -257,6 +269,6 @@ struct AddTransactionScreen: View {
         .padding(.horizontal, 20)
         .padding(.top, 10)
         .padding(.bottom, 10)
-        .background(Color.black.opacity(0.92))
+        .background(theme.surface)
     }
 }

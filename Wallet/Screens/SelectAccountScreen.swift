@@ -12,20 +12,22 @@ struct SelectAccountScreen: View {
     let onSelect: (Account) -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.appTheme) private var theme
+    @AppStorage("theme_is_dark") private var themeIsDark: Bool = true
 
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.black.ignoresSafeArea()
+                theme.backgroundGradient.ignoresSafeArea()
 
                 if accounts.isEmpty {
                     VStack(spacing: 12) {
                         Image(systemName: "creditcard")
                             .font(.system(size: 40))
-                            .foregroundStyle(.white.opacity(0.3))
+                            .foregroundStyle(theme.textTertiary)
                         Text("No accounts yet")
                             .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(.white.opacity(0.4))
+                            .foregroundStyle(theme.textSecondary)
                     }
                 } else {
                     ScrollView {
@@ -48,21 +50,21 @@ struct SelectAccountScreen: View {
                                         VStack(alignment: .leading, spacing: 4) {
                                             Text(account.displayName)
                                                 .font(.system(size: 16, weight: .bold))
-                                                .foregroundStyle(.white)
+                                                .foregroundStyle(theme.textPrimary)
 
                                             Text(account.type.rawValue)
                                                 .font(.system(size: 12, weight: .semibold))
-                                                .foregroundStyle(.white.opacity(0.4))
+                                                .foregroundStyle(theme.textTertiary)
                                         }
 
                                         Spacer()
 
                                         Image(systemName: "chevron.right")
                                             .font(.system(size: 14, weight: .semibold))
-                                            .foregroundStyle(.white.opacity(0.25))
+                                            .foregroundStyle(theme.textTertiary)
                                     }
                                     .padding(14)
-                                    .background(RoundedRectangle(cornerRadius: 14).fill(Color(white: 0.14)))
+                                    .background(RoundedRectangle(cornerRadius: 14).fill(theme.surfaceAlt))
                                 }
                                 .buttonStyle(.plain)
                             }
@@ -73,11 +75,11 @@ struct SelectAccountScreen: View {
             }
             .navigationTitle("Select Account")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(themeIsDark ? .dark : .light, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
-                        .foregroundStyle(.white)
+                        .foregroundStyle(theme.textPrimary)
                 }
             }
         }

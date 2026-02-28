@@ -9,6 +9,8 @@ import SwiftUI
 
 struct AddAccountScreen: View {
     @ObservedObject var vm: DashboardViewModel
+    @Environment(\.appTheme) private var theme
+    @AppStorage("theme_is_dark") private var themeIsDark: Bool = true
 
     let onSave: (_ bankName: String,
                  _ accountName: String,
@@ -16,7 +18,8 @@ struct AddAccountScreen: View {
                  _ type: AccountType,
                  _ currentCredit: Decimal,
                  _ isInCombinedCreditPool: Bool,
-                 _ billingCycleStartDay: Int) -> Void
+                 _ billingCycleStartDay: Int,
+                 _ colorHex: String) -> Void
 
     @Environment(\.dismiss) private var dismiss
 
@@ -27,6 +30,12 @@ struct AddAccountScreen: View {
     @State private var selectedType: AccountType = .cash
     @State private var shareBankCreditLimit: Bool = false
     @State private var billingCycleStartDay: Int = 1
+    @State private var selectedColorHex: String = "#0A84FF"
+
+    private let colorOptions: [String] = [
+        "#0A84FF", "#30D158", "#FF9F0A", "#FF375F",
+        "#BF5AF2", "#64D2FF", "#FFD60A", "#FF453A"
+    ]
 
     private var normalizedBankName: String {
         bankName.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -104,7 +113,7 @@ struct AddAccountScreen: View {
     var body: some View {
         NavigationStack {
             ZStack {
-                Color.black.ignoresSafeArea()
+                theme.backgroundGradient.ignoresSafeArea()
 
                 ScrollView {
                     VStack(spacing: 20) {
@@ -122,8 +131,11 @@ struct AddAccountScreen: View {
                         }
 
                         typeSection
+                        colorSection
 
-                        billingCycleSection
+                        if selectedType == .credit {
+                            billingCycleSection
+                        }
 
                         Color.clear.frame(height: 110)
                     }
@@ -132,11 +144,11 @@ struct AddAccountScreen: View {
             }
             .navigationTitle("Add Account")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(.dark, for: .navigationBar)
+            .toolbarColorScheme(themeIsDark ? .dark : .light, for: .navigationBar)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
-                        .foregroundStyle(.white)
+                        .foregroundStyle(theme.textPrimary)
                 }
             }
             .safeAreaInset(edge: .bottom) { saveBar }
@@ -155,16 +167,16 @@ struct AddAccountScreen: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Billing Cycle")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(theme.textSecondary)
 
             Text("The day of the month when spending resets for this account.")
                 .font(.system(size: 12, weight: .regular))
-                .foregroundStyle(.white.opacity(0.4))
+                .foregroundStyle(theme.textTertiary)
 
             HStack {
                 Text("Reset Day")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .foregroundStyle(theme.textPrimary)
 
                 Spacer()
 
@@ -174,21 +186,21 @@ struct AddAccountScreen: View {
                     }
                 }
                 .pickerStyle(.menu)
-                .tint(.white)
+                .tint(theme.textPrimary)
             }
             .padding(14)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(Color(white: 0.14))
+                    .fill(theme.surfaceAlt)
             )
 
             HStack(spacing: 4) {
                 Image(systemName: "calendar")
-                    .foregroundStyle(.white.opacity(0.4))
+                    .foregroundStyle(theme.textTertiary)
                     .font(.system(size: 11))
                 Text("Current period: \(billingPeriodPreview)")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.4))
+                    .foregroundStyle(theme.textTertiary)
             }
             .padding(.leading, 4)
         }
@@ -200,21 +212,21 @@ struct AddAccountScreen: View {
         Group {
             if selectedType == .credit, shouldLockAvailableCredit, let shared = bankSharedAvailable {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Total Available Credit (SGD)")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.6))
+                        Text("Total Available Credit (SGD)")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(theme.textSecondary)
 
                     HStack {
                         Text("Locked (Bank)")
                             .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.75))
+                            .foregroundStyle(theme.textSecondary)
                         Spacer()
                         Text(CurrencyFormatter.sgd(amount: shared))
                             .font(.system(size: 14, weight: .bold))
-                            .foregroundStyle(.white.opacity(0.75))
+                            .foregroundStyle(theme.textSecondary)
                     }
                     .padding(14)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(Color(white: 0.14)))
+                    .background(RoundedRectangle(cornerRadius: 12).fill(theme.surfaceAlt))
                 }
             } else {
                 field(
@@ -231,26 +243,26 @@ struct AddAccountScreen: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Total Credit (SGD)")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(theme.textSecondary)
 
             if shouldLockTotalCredit, let shared = bankSharedCredit {
                 HStack {
                     Text("Locked (Bank)")
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.75))
+                        .foregroundStyle(theme.textSecondary)
                     Spacer()
                     Text(CurrencyFormatter.sgd(amount: shared))
                         .font(.system(size: 14, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.75))
+                        .foregroundStyle(theme.textSecondary)
                 }
                 .padding(14)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color(white: 0.14)))
+                .background(RoundedRectangle(cornerRadius: 12).fill(theme.surfaceAlt))
             } else {
                 TextField("e.g. 12000.00", text: $creditText)
                     .keyboardType(.decimalPad)
                     .padding(14)
-                    .background(RoundedRectangle(cornerRadius: 12).fill(Color(white: 0.14)))
-                    .foregroundStyle(.white)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(theme.surfaceAlt))
+                    .foregroundStyle(theme.textPrimary)
             }
         }
     }
@@ -258,8 +270,8 @@ struct AddAccountScreen: View {
     private var pooledSection: some View {
         VStack(alignment: .leading, spacing: 10) {
             Toggle("Share credit limit with other cards (same bank)", isOn: $shareBankCreditLimit)
-                .tint(.blue)
-                .foregroundStyle(.white)
+                .tint(theme.accent)
+                .foregroundStyle(theme.textPrimary)
 
             if shareBankCreditLimit {
                 let text: String = {
@@ -271,7 +283,7 @@ struct AddAccountScreen: View {
                 }()
                 Text(text)
                     .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.35))
+                    .foregroundStyle(theme.textTertiary)
             }
         }
     }
@@ -280,7 +292,7 @@ struct AddAccountScreen: View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Type")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(theme.textSecondary)
 
             HStack(spacing: 14) {
                 ForEach(AccountType.allCases) { type in
@@ -290,12 +302,12 @@ struct AddAccountScreen: View {
                             Text(type.rawValue)
                                 .font(.system(size: 16, weight: .semibold))
                         }
-                        .foregroundStyle(selectedType == type ? .white : .white.opacity(0.4))
+                        .foregroundStyle(selectedType == type ? theme.textPrimary : theme.textTertiary)
                         .padding(.horizontal, 20)
                         .padding(.vertical, 12)
                         .background(
                             RoundedRectangle(cornerRadius: 12)
-                                .fill(selectedType == type ? Color.blue : Color(white: 0.14))
+                                .fill(selectedType == type ? theme.accent : theme.surfaceAlt)
                         )
                     }
                     .buttonStyle(.plain)
@@ -327,7 +339,8 @@ struct AddAccountScreen: View {
                 return Decimal(string: creditText) ?? 0
             }()
 
-            onSave(b, a, availableOrBalance, selectedType, credit, pooled, billingCycleStartDay)
+            let billingDay = (selectedType == .credit) ? billingCycleStartDay : 1
+            onSave(b, a, availableOrBalance, selectedType, credit, pooled, billingDay, selectedColorHex)
             dismiss()
         } label: {
             Text("Add Account")
@@ -337,7 +350,7 @@ struct AddAccountScreen: View {
                 .padding(.vertical, 16)
                 .background(
                     RoundedRectangle(cornerRadius: 14)
-                        .fill(isValid ? Color.blue : Color.blue.opacity(0.3))
+                        .fill(isValid ? theme.accent : theme.accent.opacity(0.3))
                 )
         }
         .disabled(!isValid)
@@ -345,7 +358,7 @@ struct AddAccountScreen: View {
         .padding(.horizontal, 20)
         .padding(.top, 10)
         .padding(.bottom, 10)
-        .background(Color.black.opacity(0.92))
+        .background(theme.surface)
     }
 
     // MARK: - Helpers
@@ -354,12 +367,37 @@ struct AddAccountScreen: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title)
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(theme.textSecondary)
 
             TextField(placeholder, text: text)
                 .padding(14)
-                .background(RoundedRectangle(cornerRadius: 12).fill(Color(white: 0.14)))
-                .foregroundStyle(.white)
+                .background(RoundedRectangle(cornerRadius: 12).fill(theme.surfaceAlt))
+                .foregroundStyle(theme.textPrimary)
+        }
+    }
+
+    private var colorSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Icon Color")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(theme.textSecondary)
+
+            HStack(spacing: 12) {
+                ForEach(colorOptions, id: \.self) { hex in
+                    Button {
+                        selectedColorHex = hex
+                    } label: {
+                        Circle()
+                            .fill(Color(hex: hex))
+                            .frame(width: 28, height: 28)
+                            .overlay(
+                                Circle()
+                                    .stroke(selectedColorHex == hex ? theme.textPrimary : Color.clear, lineWidth: 2)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
         }
     }
 }

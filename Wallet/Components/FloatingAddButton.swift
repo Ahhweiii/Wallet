@@ -9,6 +9,7 @@ import SwiftUI
 
 struct FloatingAddButton: View {
     let onTap: () -> Void
+    @Environment(\.appTheme) private var theme
 
     var body: some View {
         Button(action: onTap) {
@@ -16,9 +17,9 @@ struct FloatingAddButton: View {
                 .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(.white)
                 .frame(width: 56, height: 56)
-                .background(Color.blue)
+                .background(theme.accent)
                 .clipShape(Circle())
-                .shadow(color: .blue.opacity(0.4), radius: 12, x: 0, y: 6)
+                .shadow(color: theme.accent.opacity(0.35), radius: 12, x: 0, y: 6)
         }
         .buttonStyle(.plain)
     }

@@ -21,6 +21,19 @@ final class DashboardViewModel: ObservableObject {
         fetchAll()
     }
 
+    var isProEnabled: Bool { SubscriptionManager.hasPaidLimits }
+
+    func canAddAccount() -> Bool {
+        guard !isProEnabled else { return true }
+        return accounts.count < SubscriptionManager.freeAccountLimit
+    }
+
+    func canAddTransaction(on date: Date) -> Bool {
+        guard !isProEnabled else { return true }
+        let count = monthlyTransactionCount(on: date)
+        return count < SubscriptionManager.freeMonthlyTransactionLimit
+    }
+
     // MARK: - Billing Period Calculations
 
     /// Returns (startDate, endDate) for a billing period given a specific startDay.
@@ -92,9 +105,23 @@ final class DashboardViewModel: ObservableObject {
         return (finalStart, finalEnd)
     }
 
+    /// Returns (startDate, endDate) for a calendar month period.
+    /// `monthOffset` = 0 means current month, -1 = previous, etc.
+    func calendarMonthPeriod(monthOffset: Int = 0) -> (start: Date, end: Date) {
+        let cal = Calendar.current
+        let now = Date()
+        let baseStart = cal.date(from: cal.dateComponents([.year, .month], from: now)) ?? now
+        let start = cal.date(byAdding: .month, value: monthOffset, to: baseStart) ?? baseStart
+        let nextStart = cal.date(byAdding: .month, value: 1, to: start) ?? start
+        let end = nextStart.addingTimeInterval(-1)
+        return (start, end)
+    }
+
     /// Period label for a specific account
     func billingPeriodLabel(for account: Account, monthOffset: Int = 0) -> String {
-        let period = billingPeriod(startDay: account.billingCycleStartDay, monthOffset: monthOffset)
+        let period = (account.type == .cash)
+            ? calendarMonthPeriod(monthOffset: monthOffset)
+            : billingPeriod(startDay: account.billingCycleStartDay, monthOffset: monthOffset)
         let df = DateFormatter()
         df.dateFormat = "d MMM"
         let dfEnd = DateFormatter()
@@ -105,7 +132,9 @@ final class DashboardViewModel: ObservableObject {
     /// Expenses for a specific account within its own billing period
     func periodExpenses(for accountId: UUID, monthOffset: Int = 0) -> Decimal {
         guard let account = accounts.first(where: { $0.id == accountId }) else { return 0 }
-        let period = billingPeriod(startDay: account.billingCycleStartDay, monthOffset: monthOffset)
+        let period = (account.type == .cash)
+            ? calendarMonthPeriod(monthOffset: monthOffset)
+            : billingPeriod(startDay: account.billingCycleStartDay, monthOffset: monthOffset)
         return transactions
             .filter {
                 $0.accountId == accountId &&
@@ -119,7 +148,9 @@ final class DashboardViewModel: ObservableObject {
     /// Income for a specific account within its own billing period
     func periodIncome(for accountId: UUID, monthOffset: Int = 0) -> Decimal {
         guard let account = accounts.first(where: { $0.id == accountId }) else { return 0 }
-        let period = billingPeriod(startDay: account.billingCycleStartDay, monthOffset: monthOffset)
+        let period = (account.type == .cash)
+            ? calendarMonthPeriod(monthOffset: monthOffset)
+            : billingPeriod(startDay: account.billingCycleStartDay, monthOffset: monthOffset)
         return transactions
             .filter {
                 $0.accountId == accountId &&
@@ -167,8 +198,20 @@ final class DashboardViewModel: ObservableObject {
         let descriptor = FetchDescriptor<Transaction>(
             sortBy: [SortDescriptor(\.date, order: .reverse)]
         )
-        do { transactions = try modelContext.fetch(descriptor) }
-        catch { print("fetchTransactions error:", error); transactions = [] }
+        do {
+            transactions = try modelContext.fetch(descriptor)
+            var didUpdate = false
+            for txn in transactions where txn.categoryName.isEmpty {
+                if let legacy = txn.category?.rawValue {
+                    txn.categoryName = legacy
+                    didUpdate = true
+                }
+            }
+            if didUpdate { save() }
+        } catch {
+            print("fetchTransactions error:", error)
+            transactions = []
+        }
     }
 
     // MARK: - Bank pooled values
@@ -231,9 +274,12 @@ final class DashboardViewModel: ObservableObject {
                     type: AccountType,
                     currentCredit: Decimal,
                     isInCombinedCreditPool: Bool = false,
-                    billingCycleStartDay: Int = 1) {
+                    billingCycleStartDay: Int = 1,
+                    colorHex: String? = nil) -> Bool {
+        if !canAddAccount() { return false }
+
         let colors = ["#FF2D55", "#00C7BE", "#FF9500", "#AF52DE", "#FF3B30", "#30D158", "#0A84FF"]
-        let color = colors.randomElement() ?? "#0A84FF"
+        let color = colorHex ?? (colors.randomElement() ?? "#0A84FF")
         let icon = (type == .cash) ? "banknote" : "creditcard.fill"
 
         let bank = bankName.uppercased()
@@ -271,6 +317,7 @@ final class DashboardViewModel: ObservableObject {
             save()
             fetchAccounts()
         }
+        return true
     }
 
     func updateAccount(id: UUID,
@@ -280,7 +327,8 @@ final class DashboardViewModel: ObservableObject {
                        type: AccountType,
                        currentCredit: Decimal,
                        isInCombinedCreditPool: Bool,
-                       billingCycleStartDay: Int = 1) {
+                       billingCycleStartDay: Int = 1,
+                       colorHex: String? = nil) {
         guard let account = accounts.first(where: { $0.id == id }) else { return }
 
         let oldBank = account.bankName
@@ -291,6 +339,7 @@ final class DashboardViewModel: ObservableObject {
         account.type = type
         account.iconSystemName = (type == .cash) ? "banknote" : "creditcard.fill"
         account.billingCycleStartDay = min(max(billingCycleStartDay, 1), 31)
+        if let colorHex { account.colorHex = colorHex }
 
         if type != .credit {
             account.isInCombinedCreditPool = false
@@ -338,14 +387,17 @@ final class DashboardViewModel: ObservableObject {
     func addTransaction(type: TransactionType,
                         amount: Decimal,
                         accountId: UUID,
-                        category: TransactionCategory,
+                        categoryName: String,
                         date: Date,
-                        note: String) {
+                        note: String) -> Bool {
+        if !canAddTransaction(on: date) { return false }
+
         let txn = Transaction(
             type: type,
             amount: amount,
             accountId: accountId,
-            category: category,
+            categoryName: categoryName,
+            category: TransactionCategory.from(name: categoryName),
             date: date,
             note: note
         )
@@ -360,6 +412,7 @@ final class DashboardViewModel: ObservableObject {
 
         save()
         fetchAll()
+        return true
     }
 
     func deleteTransaction(_ txn: Transaction) {
@@ -379,6 +432,14 @@ final class DashboardViewModel: ObservableObject {
 
     func transactions(for accountId: UUID) -> [Transaction] {
         transactions.filter { $0.accountId == accountId }
+    }
+
+    func monthlyTransactionCount(on date: Date) -> Int {
+        let cal = Calendar.current
+        guard let monthStart = cal.date(from: cal.dateComponents([.year, .month], from: date)) else { return 0 }
+        guard let nextMonth = cal.date(byAdding: .month, value: 1, to: monthStart) else { return 0 }
+        let monthEnd = nextMonth.addingTimeInterval(-1)
+        return transactions.filter { $0.date >= monthStart && $0.date <= monthEnd }.count
     }
 
     func totalSpent(for accountId: UUID) -> Decimal {
@@ -428,7 +489,42 @@ final class DashboardViewModel: ObservableObject {
     // MARK: - Backup (Export/Import)
 
     func exportBackupJSON() throws -> Data {
-        try WalletBackupService.exportJSON(accounts: accounts, transactions: transactions)
+        let latestAccounts = try modelContext.fetch(FetchDescriptor<Account>())
+        let latestTransactions = try modelContext.fetch(FetchDescriptor<Transaction>())
+        let latestFixed = try modelContext.fetch(FetchDescriptor<FixedPayment>())
+        let latestCustom = try modelContext.fetch(FetchDescriptor<CustomCategory>())
+        return try WalletBackupService.exportJSON(accounts: latestAccounts,
+                                                 transactions: latestTransactions,
+                                                 fixedPayments: latestFixed,
+                                                 customCategories: latestCustom)
+    }
+
+    func exportTransactionsCSV() throws -> Data {
+        let latestTransactions = try modelContext.fetch(FetchDescriptor<Transaction>())
+        var lines: [String] = ["id,type,amount,accountId,category,date,note"]
+        let df = ISO8601DateFormatter()
+        for txn in latestTransactions {
+            let categoryName = txn.categoryName.isEmpty ? (txn.category?.rawValue ?? "Other") : txn.categoryName
+            let line = [
+                txn.id.uuidString,
+                txn.type.rawValue,
+                "\(txn.amount)",
+                txn.accountId.uuidString,
+                escapeCSV(categoryName),
+                df.string(from: txn.date),
+                escapeCSV(txn.note)
+            ].joined(separator: ",")
+            lines.append(line)
+        }
+        return lines.joined(separator: "\n").data(using: .utf8) ?? Data()
+    }
+
+    private func escapeCSV(_ value: String) -> String {
+        if value.contains(",") || value.contains("\"") || value.contains("\n") {
+            let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
+            return "\"\(escaped)\""
+        }
+        return value
     }
 
     func importBackupJSON(data: Data, strategy: WalletImportStrategy) throws {
