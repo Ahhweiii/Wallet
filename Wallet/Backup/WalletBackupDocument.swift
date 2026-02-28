@@ -28,24 +28,3 @@ struct WalletBackupDocument: FileDocument {
         FileWrapper(regularFileWithContents: data)
     }
 }
-
-struct WalletCSVDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.commaSeparatedText] }
-
-    var data: Data
-
-    init(data: Data = Data()) {
-        self.data = data
-    }
-
-    init(configuration: ReadConfiguration) throws {
-        guard let d = configuration.file.regularFileContents else {
-            throw CocoaError(.fileReadCorruptFile)
-        }
-        self.data = d
-    }
-
-    func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper {
-        FileWrapper(regularFileWithContents: data)
-    }
-}

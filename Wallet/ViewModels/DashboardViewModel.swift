@@ -499,34 +499,6 @@ final class DashboardViewModel: ObservableObject {
                                                  customCategories: latestCustom)
     }
 
-    func exportTransactionsCSV() throws -> Data {
-        let latestTransactions = try modelContext.fetch(FetchDescriptor<Transaction>())
-        var lines: [String] = ["id,type,amount,accountId,category,date,note"]
-        let df = ISO8601DateFormatter()
-        for txn in latestTransactions {
-            let categoryName = txn.categoryName.isEmpty ? (txn.category?.rawValue ?? "Other") : txn.categoryName
-            let line = [
-                txn.id.uuidString,
-                txn.type.rawValue,
-                "\(txn.amount)",
-                txn.accountId.uuidString,
-                escapeCSV(categoryName),
-                df.string(from: txn.date),
-                escapeCSV(txn.note)
-            ].joined(separator: ",")
-            lines.append(line)
-        }
-        return lines.joined(separator: "\n").data(using: .utf8) ?? Data()
-    }
-
-    private func escapeCSV(_ value: String) -> String {
-        if value.contains(",") || value.contains("\"") || value.contains("\n") {
-            let escaped = value.replacingOccurrences(of: "\"", with: "\"\"")
-            return "\"\(escaped)\""
-        }
-        return value
-    }
-
     func importBackupJSON(data: Data, strategy: WalletImportStrategy) throws {
         let file = try WalletBackupService.decodeBackup(from: data)
         try WalletBackupService.import(file, into: modelContext, strategy: strategy)

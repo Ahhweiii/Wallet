@@ -61,10 +61,6 @@ enum SubscriptionManager {
         hasProFeatures
     }
 
-    static var hasCSVExport: Bool {
-        hasProFeatures
-    }
-
     static var hasAppLock: Bool {
         hasProFeatures
     }

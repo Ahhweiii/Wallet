@@ -31,7 +31,7 @@ struct ContentView: View {
                 .alert("Data Reset", isPresented: $didResetStore) {
                     Button("OK", role: .cancel) { }
                 } message: {
-                    Text("We had to reset local data to complete a migration. You can restore from backup if needed.")
+                    Text("We had to reset local data to complete a migration.")
                 }
 
             if appLockEnabled && !isUnlocked {

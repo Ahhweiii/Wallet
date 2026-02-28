@@ -30,20 +30,13 @@ struct DashboardScreen: View {
     @State private var showBreakdown: Bool = false
     @State private var selectedAccount: Account? = nil
 
-    // Backup UI state
-    @State private var showBackupSheet = false
     @State private var showSettingsSheet = false
     @State private var showSubscriptionSheet = false
-    @State private var showExporter = false
-    @State private var showCSVExporter = false
-    @State private var showImporter = false
+    @State private var showBackupSheet = false
     @State private var showBackupExporter = false
-    @State private var showBackupCSVExporter = false
     @State private var showBackupImporter = false
-    @State private var exportDocument = WalletBackupDocument()
-    @State private var exportCSVDocument = WalletCSVDocument()
+    @State private var exportBackupDocument = WalletBackupDocument()
     @State private var exportFilename = "WalletBackup.json"
-
     @State private var pendingImportData: Data? = nil
     @State private var showImportStrategyDialog = false
 
@@ -51,7 +44,6 @@ struct DashboardScreen: View {
     @State private var showErrorAlert = false
     @State private var showProInfo = false
     @State private var showICloudInfo = false
-    @State private var showCSVInfo = false
     @State private var showAppLockInfo = false
 
     private let maxPerPage: Int = 4
@@ -104,15 +96,15 @@ struct DashboardScreen: View {
     }
 
     var body: some View {
-        let nav = NavigationStack { mainStack }
-            .navigationDestination(item: $selectedAccount) { acct in
-                AccountDetailScreen(vm: vm, accountId: acct.id)
-            }
+        let nav = NavigationStack {
+            mainStack
+                .navigationDestination(item: $selectedAccount) { acct in
+                    AccountDetailScreen(vm: vm, accountId: acct.id)
+                }
+        }
         return applyLifecycle(
             applyDialogs(
-                applyExporters(
-                    applySheets(nav)
-                )
+                applySheets(nav)
             )
         )
     }
@@ -138,65 +130,13 @@ struct DashboardScreen: View {
             .sheet(isPresented: $showAddTransaction) {
                 AddTransactionScreen(vm: vm) { }
             }
-            .sheet(isPresented: $showBackupSheet) { backupSheet }
             .sheet(isPresented: $showSettingsSheet) { settingsSheet }
             .sheet(isPresented: $showSubscriptionSheet) { subscriptionSheet }
-    }
-
-    private func applyExporters<V: View>(_ view: V) -> some View {
-        view
-            .fileExporter(isPresented: $showExporter,
-                          document: exportDocument,
-                          contentType: .json,
-                          defaultFilename: exportFilename) { result in
-                if case .failure(let err) = result {
-                    presentError(err)
-                }
-            }
-            .fileExporter(isPresented: $showCSVExporter,
-                          document: exportCSVDocument,
-                          contentType: .commaSeparatedText,
-                          defaultFilename: exportFilename) { result in
-                if case .failure(let err) = result {
-                    presentError(err)
-                }
-            }
-            .fileImporter(isPresented: $showImporter,
-                          allowedContentTypes: [.json],
-                          allowsMultipleSelection: false) { result in
-                do {
-                    let urls = try result.get()
-                    guard let url = urls.first else { return }
-
-                    let didStart = url.startAccessingSecurityScopedResource()
-                    defer {
-                        if didStart { url.stopAccessingSecurityScopedResource() }
-                    }
-
-                    let data = try Data(contentsOf: url)
-                    pendingImportData = data
-                    showImportStrategyDialog = true
-                } catch {
-                    presentError(error)
-                }
-            }
+            .sheet(isPresented: $showBackupSheet) { backupSheet }
     }
 
     private func applyDialogs<V: View>(_ view: V) -> some View {
         view
-            .confirmationDialog("Import backup",
-                                isPresented: $showImportStrategyDialog,
-                                titleVisibility: .visible) {
-                Button("Merge (keep existing, update duplicates)") {
-                    runImport(strategy: .merge)
-                }
-                Button("Replace All (delete existing then import)", role: .destructive) {
-                    runImport(strategy: .replaceAll)
-                }
-                Button("Cancel", role: .cancel) { pendingImportData = nil }
-            } message: {
-                Text("Choose how you want to import this backup.")
-            }
             .alert("Error", isPresented: $showErrorAlert) {
                 Button("OK", role: .cancel) { }
             } message: {
@@ -212,11 +152,6 @@ struct DashboardScreen: View {
             } message: {
                 Text("iCloud sync is enabled for Pro users. You may need to restart the app for changes to take effect.")
             }
-            .alert("CSV Export", isPresented: $showCSVInfo) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text("CSV export is available on Pro and Lifetime.")
-            }
             .alert("App Lock", isPresented: $showAppLockInfo) {
                 Button("OK", role: .cancel) { }
             } message: {
@@ -230,7 +165,6 @@ struct DashboardScreen: View {
             .onChange(of: vm.accounts.count) { _, _ in
                 accountPage = min(accountPage, max(0, pagesCount - 1))
             }
-            .onChange(of: showBackupSheet) { _, _ in }
     }
 
     private var mainStack: some View {
@@ -454,8 +388,6 @@ struct DashboardScreen: View {
         )
     }
 
-    // MARK: - Backup Sheet
-
     private var backupSheet: some View {
         NavigationStack {
             ZStack {
@@ -466,17 +398,18 @@ struct DashboardScreen: View {
                         do {
                             let data = try vm.exportBackupJSON()
                             guard data.isEmpty == false else {
-                                errorMessage = "Export failed: no data found. Try adding an account or transaction, then export again."
+                                errorMessage = "Export failed: no data found. Try again after adding data."
                                 showErrorAlert = true
                                 return
                             }
-                            exportDocument = WalletBackupDocument(data: data)
+
+                            exportBackupDocument = WalletBackupDocument(data: data)
                             exportFilename = "WalletBackup-\(safeTimestampString).json"
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                                 showBackupExporter = true
                             }
                         } catch {
-                            errorMessage = "Export failed. If this keeps happening, try restarting the app or exporting again after adding a new account/transaction.\n\nDetails: \(error.localizedDescription)"
+                            errorMessage = "Backup export failed.\n\nDetails: \(error.localizedDescription)"
                             showErrorAlert = true
                         }
                     } label: {
@@ -486,37 +419,6 @@ struct DashboardScreen: View {
                             .frame(maxWidth: .infinity)
                             .padding(.vertical, 14)
                             .background(RoundedRectangle(cornerRadius: 14).fill(theme.accent))
-                    }
-                    .buttonStyle(.plain)
-
-                    Button {
-                        guard SubscriptionManager.hasCSVExport else {
-                            showCSVInfo = true
-                            return
-                        }
-                        do {
-                            let csvData: Data = try vm.exportTransactionsCSV()
-                            guard csvData.isEmpty == false else {
-                                errorMessage = "Export failed: no transactions found. Add a transaction and try again."
-                                showErrorAlert = true
-                                return
-                            }
-                            exportCSVDocument = WalletCSVDocument(data: csvData)
-                            exportFilename = "Wallet-Transactions-\(safeTimestampString).csv"
-                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                                showBackupCSVExporter = true
-                            }
-                        } catch {
-                            errorMessage = "CSV export failed. Try again after adding a transaction.\n\nDetails: \(error.localizedDescription)"
-                            showErrorAlert = true
-                        }
-                    } label: {
-                        Text("Export Transactions (CSV)")
-                            .font(.custom("Avenir Next", size: 18).weight(.bold))
-                            .foregroundStyle(theme.textPrimary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 14)
-                            .background(RoundedRectangle(cornerRadius: 14).fill(theme.surfaceAlt))
                     }
                     .buttonStyle(.plain)
 
@@ -532,7 +434,7 @@ struct DashboardScreen: View {
                     }
                     .buttonStyle(.plain)
 
-                    Text("Import will ask whether to Merge or Replace All.")
+                    Text("Import supports Merge or Replace All.")
                         .font(.custom("Avenir Next", size: 12).weight(.semibold))
                         .foregroundStyle(theme.textTertiary)
                         .padding(.top, 6)
@@ -541,7 +443,7 @@ struct DashboardScreen: View {
                 }
                 .padding(20)
             }
-            .navigationTitle("Backup")
+            .navigationTitle("Backups")
             .navigationBarTitleDisplayMode(.inline)
             .toolbarColorScheme(themeIsDark ? .dark : .light, for: .navigationBar)
             .toolbar {
@@ -552,16 +454,8 @@ struct DashboardScreen: View {
             }
         }
         .fileExporter(isPresented: $showBackupExporter,
-                      document: exportDocument,
+                      document: exportBackupDocument,
                       contentType: .json,
-                      defaultFilename: exportFilename) { result in
-            if case .failure(let err) = result {
-                presentError(err)
-            }
-        }
-        .fileExporter(isPresented: $showBackupCSVExporter,
-                      document: exportCSVDocument,
-                      contentType: .commaSeparatedText,
                       defaultFilename: exportFilename) { result in
             if case .failure(let err) = result {
                 presentError(err)
@@ -585,6 +479,19 @@ struct DashboardScreen: View {
             } catch {
                 presentError(error)
             }
+        }
+        .confirmationDialog("Import backup",
+                            isPresented: $showImportStrategyDialog,
+                            titleVisibility: .visible) {
+            Button("Merge (keep existing, update duplicates)") {
+                runImport(strategy: .merge)
+            }
+            Button("Replace All (delete existing then import)", role: .destructive) {
+                runImport(strategy: .replaceAll)
+            }
+            Button("Cancel", role: .cancel) { pendingImportData = nil }
+        } message: {
+            Text("Choose how you want to import this backup.")
         }
     }
 
@@ -696,10 +603,10 @@ struct DashboardScreen: View {
                                     subtitle: "Unlimited accounts & transactions",
                                     plan: .proLiteYearly)
                             planRow(title: "Pro Monthly",
-                                    subtitle: "iCloud, CSV export, App Lock",
+                                    subtitle: "iCloud, App Lock",
                                     plan: .proMonthly)
                             planRow(title: "Pro Yearly",
-                                    subtitle: "iCloud, CSV export, App Lock",
+                                    subtitle: "iCloud, App Lock",
                                     plan: .proYearly)
                             planRow(title: "Lifetime",
                                     subtitle: "All Pro features",
@@ -877,13 +784,13 @@ struct DashboardScreen: View {
                 showBackupSheet = true
             } label: {
                 HStack(spacing: 12) {
-                    Image(systemName: "arrow.down.doc")
+                    Image(systemName: "externaldrive.badge.plus")
                         .font(.system(size: 16, weight: .semibold))
                         .foregroundStyle(theme.textPrimary)
                         .frame(width: 32, height: 32)
                         .background(Circle().fill(theme.surfaceAlt))
 
-                    Text("Backup")
+                    Text("Backups")
                         .font(.custom("Avenir Next", size: 16).weight(.semibold))
                         .foregroundStyle(theme.textPrimary)
 
