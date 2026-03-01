@@ -95,6 +95,8 @@ struct PlanningScreen: View {
 
             VStack(alignment: .leading, spacing: 16) {
                 HStack {
+                    Color.clear
+                        .frame(width: 34, height: 34)
                     Text("Planning")
                         .font(.custom("Avenir Next", size: 22).weight(.semibold))
                         .foregroundStyle(theme.textPrimary)

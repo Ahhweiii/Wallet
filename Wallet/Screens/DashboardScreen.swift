@@ -49,6 +49,7 @@ struct DashboardScreen: View {
     @State private var showProInfo = false
     @State private var showICloudInfo = false
     @State private var showAppLockInfo = false
+    @State private var showNotificationsInfo = false
     @State private var showAddProfilePrompt = false
     @State private var showDeleteProfileDialog = false
     @State private var pendingDeleteProfile: String? = nil
@@ -57,6 +58,7 @@ struct DashboardScreen: View {
     private let maxPerPage: Int = 4
     private let maxRecentTransactions: Int = 20
     private let sidePanelWidth: CGFloat = 260
+    private let dashboardHeaderHeight: CGFloat = 84
 
     private var currentProfileName: String {
         let trimmed = currentProfileRaw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -192,6 +194,11 @@ struct DashboardScreen: View {
             } message: {
                 Text("App Lock is available on Pro and Lifetime.")
             }
+            .alert("Notifications", isPresented: $showNotificationsInfo) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("No notifications right now.")
+            }
             .alert("New Profile", isPresented: $showAddProfilePrompt) {
                 TextField("e.g. Side Hustle", text: $newProfileName)
                 Button("Add") { addProfile() }
@@ -270,18 +277,21 @@ struct DashboardScreen: View {
                 .offset(x: showSidePanel ? 0 : -sidePanelWidth - 24)
                 .allowsHitTesting(showSidePanel)
                 .zIndex(20)
+
+            if selectedTab == 0 {
+                dashboardFixedHeader
+                    .zIndex(12)
+            } else {
+                HStack {
+                    menuButton
+                    Spacer()
+                }
+                .padding(.horizontal, 18)
+                .padding(.top, 8)
+                .zIndex(12)
+            }
         }
         .animation(.easeInOut(duration: 0.22), value: showSidePanel)
-        .safeAreaInset(edge: .top, spacing: 0) {
-            HStack {
-                menuButton
-                Spacer()
-            }
-            .padding(.horizontal, 18)
-            .padding(.top, 8)
-            .padding(.bottom, 4)
-            .background(Color.clear)
-        }
     }
 
     @ViewBuilder
@@ -310,8 +320,6 @@ struct DashboardScreen: View {
             .frame(height: 0)
 
             LazyVStack(spacing: 18) {
-                topBar
-
                 // ── Monthly Spending Card ──
                 MonthlySpendingCardView(vm: vm, showBreakdown: $showBreakdown)
                     .padding(.horizontal, 18)
@@ -342,6 +350,7 @@ struct DashboardScreen: View {
 
                 Spacer(minLength: 24)
             }
+            .padding(.top, dashboardHeaderHeight)
             .padding(.bottom, 32)
         }
         .coordinateSpace(name: "dashboard-scroll")
@@ -356,8 +365,10 @@ struct DashboardScreen: View {
 
     // MARK: - Top Bar
 
-    private var topBar: some View {
+    private var dashboardFixedHeader: some View {
         HStack {
+            menuButton
+
             VStack(alignment: .leading, spacing: 2) {
                 Text("Wallet")
                     .font(.custom("Avenir Next", size: 22).weight(.semibold))
@@ -402,9 +413,35 @@ struct DashboardScreen: View {
                 .buttonStyle(.plain)
             }
             Spacer()
+
+            Button {
+                showNotificationsInfo = true
+            } label: {
+                Image(systemName: "bell")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(theme.textPrimary)
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(theme.surfaceAlt.opacity(0.95)))
+            }
+            .buttonStyle(.plain)
+
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    themeIsDark.toggle()
+                }
+            } label: {
+                Image(systemName: themeIsDark ? "sun.max" : "moon.stars")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(theme.textPrimary)
+                    .frame(width: 34, height: 34)
+                    .background(Circle().fill(theme.surfaceAlt.opacity(0.95)))
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 18)
-        .padding(.top, 6)
+        .padding(.top, 8)
+        .padding(.bottom, 6)
+        .background(theme.backgroundGradient)
     }
 
     private var menuButton: some View {

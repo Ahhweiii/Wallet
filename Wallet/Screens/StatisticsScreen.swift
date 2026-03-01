@@ -93,6 +93,8 @@ struct StatisticsScreen: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     HStack {
+                        Color.clear
+                            .frame(width: 34, height: 34)
                         Text("Statistics")
                             .font(.custom("Avenir Next", size: 22).weight(.semibold))
                             .foregroundStyle(theme.textPrimary)
