@@ -39,6 +39,47 @@ final class DashboardViewModel: ObservableObject {
         activeProfileName = Self.normalizedProfileName(profileName)
     }
 
+    func deleteProfile(named profileName: String) {
+        let normalized = Self.normalizedProfileName(profileName)
+        guard normalized.caseInsensitiveCompare("Personal") != .orderedSame else { return }
+
+        let allAccounts = (try? modelContext.fetch(FetchDescriptor<Account>())) ?? []
+        let accountIds = Set(
+            allAccounts
+                .filter { Self.normalizedProfileName($0.profileName) == normalized }
+                .map(\.id)
+        )
+
+        if accountIds.isEmpty {
+            if activeProfileName == normalized {
+                activeProfileName = "Personal"
+                fetchAll()
+            }
+            return
+        }
+
+        let allTransactions = (try? modelContext.fetch(FetchDescriptor<Transaction>())) ?? []
+        for txn in allTransactions where accountIds.contains(txn.accountId) {
+            modelContext.delete(txn)
+        }
+
+        for account in allAccounts where accountIds.contains(account.id) {
+            modelContext.delete(account)
+        }
+
+        let allFixed = (try? modelContext.fetch(FetchDescriptor<FixedPayment>())) ?? []
+        for fixed in allFixed where Self.normalizedProfileName(fixed.profileName) == normalized {
+            modelContext.delete(fixed)
+        }
+
+        save()
+
+        if activeProfileName == normalized {
+            activeProfileName = "Personal"
+        }
+        fetchAll()
+    }
+
     private static func normalizedProfileName(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? "Personal" : trimmed
@@ -523,7 +564,6 @@ final class DashboardViewModel: ObservableObject {
 
         let pooled = (type == .credit) ? isInCombinedCreditPool : false
         let normalizedProfile = Self.normalizedProfileName(profileName)
-
         var creditToStore = currentCredit
         var amountToStore = amount
 

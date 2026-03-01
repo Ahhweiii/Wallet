@@ -23,7 +23,7 @@ struct DashboardScreen: View {
     @AppStorage(SubscriptionManager.planKey) private var planRaw: String = SubscriptionPlan.free.rawValue
     @AppStorage("category_preset") private var categoryPresetRaw: String = CategoryPreset.singapore.rawValue
     @AppStorage("tracking_current_profile") private var currentProfileRaw: String = "Personal"
-    @AppStorage("tracking_profiles") private var trackingProfilesRaw: String = "Personal|Family|Work"
+    @AppStorage("tracking_profiles") private var trackingProfilesRaw: String = "Personal"
     private var currentPlan: SubscriptionPlan { SubscriptionPlan(rawValue: planRaw) ?? .free }
 
     @State private var selectedTab: Int = 0
@@ -50,6 +50,8 @@ struct DashboardScreen: View {
     @State private var showICloudInfo = false
     @State private var showAppLockInfo = false
     @State private var showAddProfilePrompt = false
+    @State private var showDeleteProfileDialog = false
+    @State private var pendingDeleteProfile: String? = nil
     @State private var newProfileName = ""
 
     private let maxPerPage: Int = 4
@@ -66,7 +68,7 @@ struct DashboardScreen: View {
             .split(separator: "|")
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-        if base.isEmpty { return ["Personal", "Family", "Work"] }
+        if base.isEmpty { return ["Personal"] }
         var seen = Set<String>()
         var result: [String] = []
         for name in base where !seen.contains(name.lowercased()) {
@@ -190,18 +192,43 @@ struct DashboardScreen: View {
             } message: {
                 Text("App Lock is available on Pro and Lifetime.")
             }
-            .alert("New Tracking Page", isPresented: $showAddProfilePrompt) {
+            .alert("New Profile", isPresented: $showAddProfilePrompt) {
                 TextField("e.g. Side Hustle", text: $newProfileName)
                 Button("Add") { addProfile() }
                 Button("Cancel", role: .cancel) { newProfileName = "" }
             } message: {
-                Text("Create a separate page to track another set of accounts and expenses.")
+                Text("Create a separate profile to track a different set of accounts and expenses.")
+            }
+            .confirmationDialog("Delete Profile",
+                                isPresented: $showDeleteProfileDialog,
+                                titleVisibility: .visible) {
+                Button("Delete", role: .destructive) {
+                    guard let profile = pendingDeleteProfile else { return }
+                    deleteProfile(profile)
+                    pendingDeleteProfile = nil
+                }
+                Button("Cancel", role: .cancel) {
+                    pendingDeleteProfile = nil
+                }
+            } message: {
+                if let profile = pendingDeleteProfile {
+                    Text("Delete profile '\(profile)' and all its accounts, transactions, and fixed plans?")
+                }
             }
     }
 
     private func applyLifecycle<V: View>(_ view: V) -> some View {
         view
             .onAppear {
+                if trackingProfilesRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    trackingProfilesRaw = "Personal"
+                }
+                if currentProfileRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    currentProfileRaw = "Personal"
+                }
+                if !trackingProfiles.contains(where: { $0.caseInsensitiveCompare(currentProfileName) == .orderedSame }) {
+                    currentProfileRaw = trackingProfiles.first ?? "Personal"
+                }
                 vm.setActiveProfile(currentProfileName)
                 vm.fetchAll()
             }
@@ -343,12 +370,24 @@ struct DashboardScreen: View {
                             Label(profile, systemImage: profile == currentProfileName ? "checkmark" : "person.crop.circle")
                         }
                     }
+                    let deletable = trackingProfiles.filter { $0.caseInsensitiveCompare("Personal") != .orderedSame }
+                    if deletable.isEmpty == false {
+                        Divider()
+                        ForEach(deletable, id: \.self) { profile in
+                            Button(role: .destructive) {
+                                pendingDeleteProfile = profile
+                                showDeleteProfileDialog = true
+                            } label: {
+                                Label("Delete \(profile)", systemImage: "trash")
+                            }
+                        }
+                    }
                     Divider()
                     Button {
                         newProfileName = ""
                         showAddProfilePrompt = true
                     } label: {
-                        Label("Add Page", systemImage: "plus")
+                        Label("Add Profile", systemImage: "plus")
                     }
                 } label: {
                     HStack(spacing: 4) {
@@ -401,34 +440,50 @@ struct DashboardScreen: View {
             Divider()
                 .padding(.vertical, 6)
 
-            Text("Pages")
+            Text("Profile")
                 .font(.custom("Avenir Next", size: 13).weight(.bold))
                 .foregroundStyle(theme.textSecondary)
                 .padding(.horizontal, 12)
 
             ForEach(trackingProfiles, id: \.self) { profile in
-                Button {
-                    currentProfileRaw = profile
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showSidePanel = false
+                HStack(spacing: 8) {
+                    Button {
+                        currentProfileRaw = profile
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showSidePanel = false
+                        }
+                    } label: {
+                        HStack(spacing: 10) {
+                            Image(systemName: profile == currentProfileName ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 14, weight: .semibold))
+                            Text(profile)
+                                .font(.custom("Avenir Next", size: 15).weight(.semibold))
+                            Spacer()
+                        }
+                        .foregroundStyle(profile == currentProfileName ? theme.accent : theme.textPrimary)
+                        .padding(.vertical, 10)
+                        .padding(.horizontal, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(profile == currentProfileName ? theme.surfaceAlt : Color.clear)
+                        )
                     }
-                } label: {
-                    HStack(spacing: 10) {
-                        Image(systemName: profile == currentProfileName ? "checkmark.circle.fill" : "circle")
-                            .font(.system(size: 14, weight: .semibold))
-                        Text(profile)
-                            .font(.custom("Avenir Next", size: 15).weight(.semibold))
-                        Spacer()
+                    .buttonStyle(.plain)
+
+                    if profile.caseInsensitiveCompare("Personal") != .orderedSame {
+                        Button(role: .destructive) {
+                            pendingDeleteProfile = profile
+                            showDeleteProfileDialog = true
+                        } label: {
+                            Image(systemName: "trash")
+                                .font(.system(size: 13, weight: .bold))
+                                .foregroundStyle(theme.negative)
+                                .frame(width: 28, height: 28)
+                                .background(Circle().fill(theme.surfaceAlt))
+                        }
+                        .buttonStyle(.plain)
                     }
-                    .foregroundStyle(profile == currentProfileName ? theme.accent : theme.textPrimary)
-                    .padding(.vertical, 10)
-                    .padding(.horizontal, 12)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(profile == currentProfileName ? theme.surfaceAlt : Color.clear)
-                    )
                 }
-                .buttonStyle(.plain)
             }
 
             Button {
@@ -437,7 +492,7 @@ struct DashboardScreen: View {
             } label: {
                 HStack(spacing: 10) {
                     Image(systemName: "plus.circle")
-                    Text("Add Page")
+                    Text("Add Profile")
                         .font(.custom("Avenir Next", size: 15).weight(.semibold))
                     Spacer()
                 }
@@ -813,6 +868,16 @@ struct DashboardScreen: View {
         trackingProfilesRaw = updated.joined(separator: "|")
         currentProfileRaw = trimmed
         newProfileName = ""
+    }
+
+    private func deleteProfile(_ profile: String) {
+        guard profile.caseInsensitiveCompare("Personal") != .orderedSame else { return }
+        vm.deleteProfile(named: profile)
+        let remaining = trackingProfiles.filter { $0.caseInsensitiveCompare(profile) != .orderedSame }
+        trackingProfilesRaw = remaining.isEmpty ? "Personal" : remaining.joined(separator: "|")
+        if currentProfileRaw.caseInsensitiveCompare(profile) == .orderedSame {
+            currentProfileRaw = "Personal"
+        }
     }
 
     private var subscriptionSheet: some View {
