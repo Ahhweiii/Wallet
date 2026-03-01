@@ -43,6 +43,7 @@ struct AccountDTO: Codable, Hashable {
     var colorHex: String
     var iconSystemName: String
     var isInCombinedCreditPool: Bool
+    var profileName: String
     var billingCycleStartDay: Int
 
     init(from model: Account) {
@@ -55,7 +56,27 @@ struct AccountDTO: Codable, Hashable {
         self.colorHex = model.colorHex
         self.iconSystemName = model.iconSystemName
         self.isInCombinedCreditPool = model.isInCombinedCreditPool
+        self.profileName = model.profileName
         self.billingCycleStartDay = model.billingCycleStartDay
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case id, bankName, accountName, currentCredit, amount, type, colorHex, iconSystemName, isInCombinedCreditPool, profileName, billingCycleStartDay
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try container.decode(UUID.self, forKey: .id)
+        self.bankName = try container.decode(String.self, forKey: .bankName)
+        self.accountName = try container.decode(String.self, forKey: .accountName)
+        self.currentCredit = try container.decode(Decimal.self, forKey: .currentCredit)
+        self.amount = try container.decode(Decimal.self, forKey: .amount)
+        self.type = try container.decode(AccountType.self, forKey: .type)
+        self.colorHex = try container.decode(String.self, forKey: .colorHex)
+        self.iconSystemName = try container.decode(String.self, forKey: .iconSystemName)
+        self.isInCombinedCreditPool = try container.decode(Bool.self, forKey: .isInCombinedCreditPool)
+        self.profileName = try container.decodeIfPresent(String.self, forKey: .profileName) ?? "Personal"
+        self.billingCycleStartDay = try container.decodeIfPresent(Int.self, forKey: .billingCycleStartDay) ?? 1
     }
 }
 
@@ -115,29 +136,41 @@ struct FixedPaymentDTO: Codable, Hashable {
     var id: UUID
     var name: String
     var amount: Decimal
+    var outstandingAmount: Decimal?
     var type: FixedPaymentType
     var typeName: String
     var frequency: FixedPaymentFrequency
     var startDate: Date
     var endDate: Date?
     var cycles: Int?
+    var chargeAccountId: UUID?
+    var chargeDay: Int?
+    var chargeDate: Date?
+    var lastChargedAt: Date?
+    var profileName: String
     var note: String
 
     init(from model: FixedPayment) {
         self.id = model.id
         self.name = model.name
         self.amount = model.amount
+        self.outstandingAmount = model.outstandingAmount
         self.type = model.type
         self.typeName = model.typeName
         self.frequency = model.frequency
         self.startDate = model.startDate
         self.endDate = model.endDate
         self.cycles = model.cycles
+        self.chargeAccountId = model.chargeAccountId
+        self.chargeDay = model.chargeDay
+        self.chargeDate = model.chargeDate
+        self.lastChargedAt = model.lastChargedAt
+        self.profileName = model.profileName
         self.note = model.note
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, amount, type, typeName, frequency, startDate, endDate, cycles, note, categoryName
+        case id, name, amount, outstandingAmount, type, typeName, frequency, startDate, endDate, cycles, chargeAccountId, chargeDay, chargeDate, lastChargedAt, profileName, note, categoryName
     }
 
     init(from decoder: Decoder) throws {
@@ -145,6 +178,7 @@ struct FixedPaymentDTO: Codable, Hashable {
         self.id = try container.decode(UUID.self, forKey: .id)
         self.name = try container.decode(String.self, forKey: .name)
         self.amount = try container.decode(Decimal.self, forKey: .amount)
+        self.outstandingAmount = try container.decodeIfPresent(Decimal.self, forKey: .outstandingAmount)
         self.type = try container.decode(FixedPaymentType.self, forKey: .type)
         self.typeName = try container.decodeIfPresent(String.self, forKey: .typeName) ?? ""
         self.frequency = try container.decode(FixedPaymentFrequency.self, forKey: .frequency)
@@ -152,6 +186,12 @@ struct FixedPaymentDTO: Codable, Hashable {
         self.endDate = try container.decodeIfPresent(Date.self, forKey: .endDate)
         _ = try container.decodeIfPresent(String.self, forKey: .categoryName)
         self.cycles = try container.decodeIfPresent(Int.self, forKey: .cycles)
+        self.chargeAccountId = try container.decodeIfPresent(UUID.self, forKey: .chargeAccountId)
+        let decodedChargeDay = try container.decodeIfPresent(Int.self, forKey: .chargeDay)
+        self.chargeDate = try container.decodeIfPresent(Date.self, forKey: .chargeDate)
+        self.chargeDay = decodedChargeDay ?? self.chargeDate.map { Calendar.current.component(.day, from: $0) }
+        self.lastChargedAt = try container.decodeIfPresent(Date.self, forKey: .lastChargedAt)
+        self.profileName = try container.decodeIfPresent(String.self, forKey: .profileName) ?? "Personal"
         self.note = try container.decode(String.self, forKey: .note)
     }
 
@@ -160,12 +200,18 @@ struct FixedPaymentDTO: Codable, Hashable {
         try container.encode(id, forKey: .id)
         try container.encode(name, forKey: .name)
         try container.encode(amount, forKey: .amount)
+        try container.encodeIfPresent(outstandingAmount, forKey: .outstandingAmount)
         try container.encode(type, forKey: .type)
         try container.encode(typeName, forKey: .typeName)
         try container.encode(frequency, forKey: .frequency)
         try container.encode(startDate, forKey: .startDate)
         try container.encodeIfPresent(endDate, forKey: .endDate)
         try container.encodeIfPresent(cycles, forKey: .cycles)
+        try container.encodeIfPresent(chargeAccountId, forKey: .chargeAccountId)
+        try container.encodeIfPresent(chargeDay, forKey: .chargeDay)
+        try container.encodeIfPresent(chargeDate, forKey: .chargeDate)
+        try container.encodeIfPresent(lastChargedAt, forKey: .lastChargedAt)
+        try container.encode(profileName, forKey: .profileName)
         try container.encode(note, forKey: .note)
     }
 }

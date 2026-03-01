@@ -9,6 +9,7 @@ import SwiftUI
 
 struct AddTransactionScreen: View {
     @ObservedObject var vm: DashboardViewModel
+    let fixedAccountId: UUID?
     let onDone: () -> Void
     @Environment(\.appTheme) private var theme
     @AppStorage("theme_is_dark") private var themeIsDark: Bool = true
@@ -23,15 +24,56 @@ struct AddTransactionScreen: View {
     @State private var note: String = ""
 
     @State private var showSelectAccount: Bool = false
+    @State private var showSelectTargetAccount: Bool = false
     @State private var showSelectCategory: Bool = false
     @State private var showLimitAlert: Bool = false
+    @State private var showInsufficientCashAlert: Bool = false
+    @State private var isCreditCardPayment: Bool = false
+    @State private var selectedTargetAccount: Account? = nil
+
+    init(vm: DashboardViewModel,
+         fixedAccountId: UUID? = nil,
+         onDone: @escaping () -> Void) {
+        self.vm = vm
+        self.fixedAccountId = fixedAccountId
+        self.onDone = onDone
+    }
+
+    private var availableTargetAccounts: [Account] {
+        guard let source = selectedAccount else { return [] }
+        return vm.accounts.filter { account in
+            guard account.id != source.id else { return false }
+            if selectedType == .transfer {
+                return true
+            }
+            return account.type == .credit
+        }
+    }
 
     private var isValid: Bool {
         guard let amt = Decimal(string: amountText), amt > 0 else { return false }
-        return selectedAccount != nil && selectedCategory != nil
+        guard selectedAccount != nil else { return false }
+
+        if selectedType == .transfer {
+            return selectedTargetAccount != nil
+        }
+        if isCreditCardPayment {
+            return selectedTargetAccount?.type == .credit
+        }
+        return selectedCategory != nil
     }
 
-    private var displayColor: Color { selectedType == .expense ? theme.negative : theme.positive }
+    private var isAccountLocked: Bool {
+        fixedAccountId != nil
+    }
+
+    private var displayColor: Color {
+        switch selectedType {
+        case .expense: return theme.negative
+        case .income: return theme.positive
+        case .transfer: return theme.accent
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -45,6 +87,10 @@ struct AddTransactionScreen: View {
                         VStack(spacing: 24) {
                             amountSection
                             accountSection
+                            if selectedType == .expense { creditPaymentSection }
+                            if isCreditCardPayment || selectedType == .transfer {
+                                targetAccountSection
+                            }
                             categorySection
                             dateSection
                             noteSection
@@ -76,10 +122,42 @@ struct AddTransactionScreen: View {
             .sheet(isPresented: $showSelectAccount) {
                 SelectAccountScreen(accounts: vm.accounts) { selectedAccount = $0 }
             }
+            .sheet(isPresented: $showSelectTargetAccount) {
+                SelectAccountScreen(accounts: availableTargetAccounts) { selectedTargetAccount = $0 }
+            }
             .sheet(isPresented: $showSelectCategory) {
                 SelectCategoryScreen(transactionType: selectedType) { selectedCategory = $0 }
             }
-            .onChange(of: selectedType) { _, _ in selectedCategory = nil }
+            .onChange(of: selectedType) { _, newType in
+                selectedCategory = nil
+                if newType != .expense {
+                    isCreditCardPayment = false
+                }
+                if newType != .transfer {
+                    selectedTargetAccount = nil
+                }
+            }
+            .onChange(of: selectedAccount) { _, acct in
+                if acct?.type != .cash {
+                    isCreditCardPayment = false
+                }
+                if selectedTargetAccount?.id == acct?.id {
+                    selectedTargetAccount = nil
+                }
+            }
+            .onAppear {
+                guard let fixedAccountId else { return }
+                selectedAccount = vm.accounts.first(where: { $0.id == fixedAccountId })
+            }
+            .onChange(of: vm.accounts.count) { _, _ in
+                guard let fixedAccountId else { return }
+                selectedAccount = vm.accounts.first(where: { $0.id == fixedAccountId })
+            }
+            .alert("Insufficient Cash", isPresented: $showInsufficientCashAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text("The selected cash account does not have enough balance for this payment.")
+            }
         }
     }
 
@@ -95,7 +173,7 @@ struct AddTransactionScreen: View {
                             .foregroundStyle(selectedType == type ? theme.textPrimary : theme.textTertiary)
 
                         Rectangle()
-                            .fill(selectedType == type ? (type == .expense ? theme.negative : theme.positive) : .clear)
+                            .fill(selectedType == type ? tabColor(for: type) : .clear)
                             .frame(height: 3)
                             .cornerRadius(2)
                     }
@@ -109,12 +187,12 @@ struct AddTransactionScreen: View {
 
     private var amountSection: some View {
         VStack(spacing: 12) {
-            Text(selectedType == .expense ? "How much did you spend?" : "How much did you receive?")
+            Text(amountPrompt)
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(theme.textSecondary)
 
             HStack(spacing: 6) {
-                Text(selectedType == .expense ? "−" : "+")
+                Text(amountSign)
                     .font(.system(size: 40, weight: .bold))
                     .foregroundStyle(displayColor)
 
@@ -137,7 +215,11 @@ struct AddTransactionScreen: View {
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(theme.textSecondary)
 
-            Button { showSelectAccount = true } label: {
+            Button {
+                if !isAccountLocked {
+                    showSelectAccount = true
+                }
+            } label: {
                 HStack {
                     if let acct = selectedAccount {
                         RoundedRectangle(cornerRadius: 8)
@@ -158,18 +240,26 @@ struct AddTransactionScreen: View {
                             .foregroundStyle(theme.textTertiary)
                     }
                     Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(theme.textTertiary)
+                    if !isAccountLocked {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundStyle(theme.textTertiary)
+                    }
                 }
                 .padding(14)
                 .background(RoundedRectangle(cornerRadius: 12).fill(theme.surfaceAlt))
             }
             .buttonStyle(.plain)
+            .disabled(isAccountLocked)
         }
     }
 
     private var categorySection: some View {
+        if isCreditCardPayment || selectedType == .transfer {
+            return AnyView(EmptyView())
+        }
+
+        return AnyView(
         VStack(alignment: .leading, spacing: 8) {
             Text("Category")
                 .font(.system(size: 14, weight: .semibold))
@@ -192,6 +282,71 @@ struct AddTransactionScreen: View {
                     } else {
                         Image(systemName: "square.grid.2x2").foregroundStyle(theme.textTertiary)
                         Text("Select Category")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(theme.textTertiary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(theme.textTertiary)
+                }
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 12).fill(theme.surfaceAlt))
+            }
+            .buttonStyle(.plain)
+        }
+        )
+    }
+
+    private var creditPaymentSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Toggle("Payment to Credit Card", isOn: Binding(
+                get: { isCreditCardPayment },
+                set: { enabled in
+                    if enabled, selectedAccount?.type != .cash {
+                        isCreditCardPayment = false
+                        return
+                    }
+                    isCreditCardPayment = enabled
+                    if !enabled { selectedTargetAccount = nil }
+                }
+            ))
+            .tint(theme.accent)
+            .foregroundStyle(theme.textPrimary)
+
+            if selectedAccount?.type != .cash {
+                Text("Select a cash account first to enable credit card payment.")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(theme.textTertiary)
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 12).fill(theme.surfaceAlt))
+    }
+
+    private var targetAccountSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(selectedType == .transfer ? "Transfer To" : "Pay To")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(theme.textSecondary)
+
+            Button { showSelectTargetAccount = true } label: {
+                HStack {
+                    if let acct = selectedTargetAccount {
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color(hex: acct.colorHex).opacity(0.95))
+                            .frame(width: 32, height: 32)
+                            .overlay(
+                                Image(systemName: acct.iconSystemName)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(.white)
+                            )
+                        Text(acct.displayName)
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundStyle(theme.textPrimary)
+                    } else {
+                        Image(systemName: "creditcard").foregroundStyle(theme.textTertiary)
+                        Text(selectedType == .transfer ? "Select Destination Account" : "Select Credit Card")
                             .font(.system(size: 16, weight: .semibold))
                             .foregroundStyle(theme.textTertiary)
                     }
@@ -237,16 +392,50 @@ struct AddTransactionScreen: View {
 
     private var saveBar: some View {
         Button {
-            guard let amt = Decimal(string: amountText),
-                  let acct = selectedAccount,
-                  let cat = selectedCategory else { return }
+            guard let amt = Decimal(string: amountText) else { return }
+            let acct: Account
+            if let fixedAccountId {
+                guard let fixedAccount = vm.accounts.first(where: { $0.id == fixedAccountId }) else { return }
+                acct = fixedAccount
+            } else {
+                guard let selectedAccount else { return }
+                acct = selectedAccount
+            }
 
-            let added = vm.addTransaction(type: selectedType,
+            let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+            let added: Bool
+
+            if selectedType == .transfer {
+                guard let target = selectedTargetAccount else { return }
+                if acct.type == .cash, acct.amount < amt {
+                    showInsufficientCashAlert = true
+                    return
+                }
+                added = vm.transferBetweenAccounts(fromAccountId: acct.id,
+                                                   toAccountId: target.id,
+                                                   amount: amt,
+                                                   date: selectedDate,
+                                                   note: trimmedNote)
+            } else if isCreditCardPayment {
+                guard let target = selectedTargetAccount else { return }
+                if acct.amount < amt {
+                    showInsufficientCashAlert = true
+                    return
+                }
+                added = vm.payCreditCard(fromCashAccountId: acct.id,
+                                         toCreditAccountId: target.id,
+                                         amount: amt,
+                                         date: selectedDate,
+                                         note: trimmedNote)
+            } else {
+                guard let cat = selectedCategory else { return }
+                added = vm.addTransaction(type: selectedType,
                                           amount: amt,
                                           accountId: acct.id,
                                           categoryName: cat.name,
                                           date: selectedDate,
-                                          note: note.trimmingCharacters(in: .whitespacesAndNewlines))
+                                          note: trimmedNote)
+            }
             if added {
                 onDone()
                 dismiss()
@@ -270,5 +459,29 @@ struct AddTransactionScreen: View {
         .padding(.top, 10)
         .padding(.bottom, 10)
         .background(theme.surface)
+    }
+
+    private var amountPrompt: String {
+        switch selectedType {
+        case .expense: return "How much did you spend?"
+        case .income: return "How much did you receive?"
+        case .transfer: return "How much do you want to transfer?"
+        }
+    }
+
+    private var amountSign: String {
+        switch selectedType {
+        case .expense: return "−"
+        case .income: return "+"
+        case .transfer: return "⇄"
+        }
+    }
+
+    private func tabColor(for type: TransactionType) -> Color {
+        switch type {
+        case .expense: return theme.negative
+        case .income: return theme.positive
+        case .transfer: return theme.accent
+        }
     }
 }

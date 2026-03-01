@@ -33,6 +33,13 @@ struct AccountCardView: View {
                         .foregroundStyle(theme.textSecondary)
                         .lineLimit(1)
 
+                    if !subtitle.isEmpty {
+                        Text(subtitle)
+                            .font(.custom("Avenir Next", size: 10).weight(.semibold))
+                            .foregroundStyle(theme.textTertiary)
+                            .lineLimit(1)
+                    }
+
                     Text(CurrencyFormatter.sgd(amount: totalSpent))
                         .font(.custom("Avenir Next", size: 20).weight(.bold))
                         .foregroundStyle(theme.textPrimary)

@@ -21,9 +21,13 @@ struct DashboardScreen: View {
     @Environment(\.appTheme) private var theme
     @AppStorage("theme_is_dark") private var themeIsDark: Bool = true
     @AppStorage(SubscriptionManager.planKey) private var planRaw: String = SubscriptionPlan.free.rawValue
+    @AppStorage("category_preset") private var categoryPresetRaw: String = CategoryPreset.singapore.rawValue
+    @AppStorage("tracking_current_profile") private var currentProfileRaw: String = "Personal"
+    @AppStorage("tracking_profiles") private var trackingProfilesRaw: String = "Personal|Family|Work"
     private var currentPlan: SubscriptionPlan { SubscriptionPlan(rawValue: planRaw) ?? .free }
 
     @State private var selectedTab: Int = 0
+    @State private var showSidePanel: Bool = false
     @State private var accountPage: Int = 0
     @State private var showAddAccount: Bool = false
     @State private var showAddTransaction: Bool = false
@@ -45,8 +49,32 @@ struct DashboardScreen: View {
     @State private var showProInfo = false
     @State private var showICloudInfo = false
     @State private var showAppLockInfo = false
+    @State private var showAddProfilePrompt = false
+    @State private var newProfileName = ""
 
     private let maxPerPage: Int = 4
+    private let maxRecentTransactions: Int = 20
+    private let sidePanelWidth: CGFloat = 260
+
+    private var currentProfileName: String {
+        let trimmed = currentProfileRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Personal" : trimmed
+    }
+
+    private var trackingProfiles: [String] {
+        let base = trackingProfilesRaw
+            .split(separator: "|")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if base.isEmpty { return ["Personal", "Family", "Work"] }
+        var seen = Set<String>()
+        var result: [String] = []
+        for name in base where !seen.contains(name.lowercased()) {
+            seen.insert(name.lowercased())
+            result.append(name)
+        }
+        return result
+    }
 
     init(modelContext: ModelContext) {
         _vm = StateObject(wrappedValue: DashboardViewModel(modelContext: modelContext))
@@ -56,7 +84,11 @@ struct DashboardScreen: View {
     private var totalSpentByAccountId: [UUID: Decimal] {
         var dict: [UUID: Decimal] = [:]
         for acct in vm.accounts {
-            dict[acct.id] = vm.periodExpenses(for: acct.id, monthOffset: 0)
+            if acct.type == .cash {
+                dict[acct.id] = acct.amount
+            } else {
+                dict[acct.id] = vm.periodExpenses(for: acct.id, monthOffset: 0)
+            }
         }
         return dict
     }
@@ -66,7 +98,7 @@ struct DashboardScreen: View {
         var dict: [UUID: String] = [:]
         for acct in vm.accounts {
             if acct.type == .cash {
-                dict[acct.id] = ""
+                dict[acct.id] = "Total Cash Available"
             } else {
                 dict[acct.id] = vm.billingPeriodLabel(for: acct, monthOffset: 0)
             }
@@ -81,7 +113,7 @@ struct DashboardScreen: View {
     }
 
     private var filteredTransactions: [Transaction] {
-        vm.transactions.sorted { $0.date > $1.date }
+        vm.transactions
     }
 
     private var canAddAccount: Bool {
@@ -120,6 +152,7 @@ struct DashboardScreen: View {
                                               currentCredit: credit,
                                               isInCombinedCreditPool: pooled,
                                               billingCycleStartDay: billingDay,
+                                              profileName: currentProfileName,
                                               colorHex: colorHex)
                     if !added {
                         errorMessage = "Free tier allows up to \(SubscriptionManager.freeAccountLimit) accounts. Upgrade to Pro for unlimited accounts."
@@ -157,18 +190,32 @@ struct DashboardScreen: View {
             } message: {
                 Text("App Lock is available on Pro and Lifetime.")
             }
+            .alert("New Tracking Page", isPresented: $showAddProfilePrompt) {
+                TextField("e.g. Side Hustle", text: $newProfileName)
+                Button("Add") { addProfile() }
+                Button("Cancel", role: .cancel) { newProfileName = "" }
+            } message: {
+                Text("Create a separate page to track another set of accounts and expenses.")
+            }
     }
 
     private func applyLifecycle<V: View>(_ view: V) -> some View {
         view
-            .onAppear { vm.fetchAll() }
+            .onAppear {
+                vm.setActiveProfile(currentProfileName)
+                vm.fetchAll()
+            }
+            .onChange(of: currentProfileRaw) { _, newValue in
+                vm.setActiveProfile(newValue)
+                vm.fetchAll()
+            }
             .onChange(of: vm.accounts.count) { _, _ in
                 accountPage = min(accountPage, max(0, pagesCount - 1))
             }
     }
 
     private var mainStack: some View {
-        ZStack(alignment: .bottomTrailing) {
+        ZStack(alignment: .topLeading) {
             theme.backgroundGradient.ignoresSafeArea()
 
             tabContent
@@ -176,12 +223,37 @@ struct DashboardScreen: View {
             if selectedTab == 0 {
                 FloatingAddButton { showAddTransaction = true }
                     .padding(.trailing, 22)
-                    .padding(.bottom, 90)
+                    .padding(.bottom, 28)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
             }
 
-            BottomTabBarView(selectedTab: $selectedTab)
-                .padding(.horizontal, 18)
-                .padding(.bottom, 22)
+            if showSidePanel {
+                Color.black.opacity(0.35)
+                    .ignoresSafeArea()
+                    .onTapGesture {
+                        withAnimation(.easeInOut(duration: 0.2)) {
+                            showSidePanel = false
+                        }
+                    }
+                    .transition(.opacity)
+                    .zIndex(15)
+            }
+
+            sidePanel
+                .offset(x: showSidePanel ? 0 : -sidePanelWidth - 24)
+                .allowsHitTesting(showSidePanel)
+                .zIndex(20)
+        }
+        .animation(.easeInOut(duration: 0.22), value: showSidePanel)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            HStack {
+                menuButton
+                Spacer()
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+            .background(Color.clear)
         }
     }
 
@@ -241,9 +313,9 @@ struct DashboardScreen: View {
 
                 recentTransactions
 
-                Spacer(minLength: 90)
+                Spacer(minLength: 24)
             }
-            .padding(.bottom, 110)
+            .padding(.bottom, 32)
         }
         .coordinateSpace(name: "dashboard-scroll")
         .onPreferenceChange(ScrollOffsetKey.self) { offset in
@@ -259,33 +331,160 @@ struct DashboardScreen: View {
 
     private var topBar: some View {
         HStack {
-            Text("Wallet")
-                .font(.custom("Avenir Next", size: 22).weight(.semibold))
-                .foregroundStyle(theme.textPrimary)
-            Spacer()
-            HStack(spacing: 12) {
-                iconButton(systemName: themeIsDark ? "sun.max" : "moon.stars", size: 16) {
-                    withAnimation(.easeInOut(duration: 0.2)) { themeIsDark.toggle() }
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Wallet")
+                    .font(.custom("Avenir Next", size: 22).weight(.semibold))
+                    .foregroundStyle(theme.textPrimary)
+                Menu {
+                    ForEach(trackingProfiles, id: \.self) { profile in
+                        Button {
+                            currentProfileRaw = profile
+                        } label: {
+                            Label(profile, systemImage: profile == currentProfileName ? "checkmark" : "person.crop.circle")
+                        }
+                    }
+                    Divider()
+                    Button {
+                        newProfileName = ""
+                        showAddProfilePrompt = true
+                    } label: {
+                        Label("Add Page", systemImage: "plus")
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Text(currentProfileName)
+                            .font(.custom("Avenir Next", size: 12).weight(.semibold))
+                            .foregroundStyle(theme.textSecondary)
+                        Image(systemName: "chevron.down")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(theme.textTertiary)
+                    }
                 }
-
-                iconButton(systemName: "bell", size: 18) { }
+                .buttonStyle(.plain)
             }
+            Spacer()
         }
         .padding(.horizontal, 18)
         .padding(.top, 6)
     }
 
-    private func iconButton(systemName: String, size: CGFloat, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            ZStack {
-                Circle()
-                    .fill(theme.surfaceAlt)
-                    .frame(width: 32, height: 32)
-                Image(systemName: systemName)
-                    .font(.system(size: size, weight: .semibold))
-                    .foregroundStyle(theme.textPrimary)
+    private var menuButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showSidePanel.toggle()
             }
-            .frame(width: 32, height: 32)
+        } label: {
+            Image(systemName: showSidePanel ? "xmark" : "line.3.horizontal")
+                .font(.system(size: 16, weight: .bold))
+                .foregroundStyle(theme.textPrimary)
+                .frame(width: 34, height: 34)
+                .background(
+                    Circle()
+                        .fill(theme.surfaceAlt.opacity(0.95))
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var sidePanel: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Navigation")
+                .font(.custom("Avenir Next", size: 18).weight(.bold))
+                .foregroundStyle(theme.textPrimary)
+                .padding(.bottom, 6)
+
+            sidePanelItem(index: 0, title: "Dashboard", icon: "dollarsign.circle")
+            sidePanelItem(index: 1, title: "Planning", icon: "clock")
+            sidePanelItem(index: 2, title: "Statistics", icon: "chart.bar")
+            sidePanelItem(index: 3, title: "More", icon: "ellipsis")
+
+            Divider()
+                .padding(.vertical, 6)
+
+            Text("Pages")
+                .font(.custom("Avenir Next", size: 13).weight(.bold))
+                .foregroundStyle(theme.textSecondary)
+                .padding(.horizontal, 12)
+
+            ForEach(trackingProfiles, id: \.self) { profile in
+                Button {
+                    currentProfileRaw = profile
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        showSidePanel = false
+                    }
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: profile == currentProfileName ? "checkmark.circle.fill" : "circle")
+                            .font(.system(size: 14, weight: .semibold))
+                        Text(profile)
+                            .font(.custom("Avenir Next", size: 15).weight(.semibold))
+                        Spacer()
+                    }
+                    .foregroundStyle(profile == currentProfileName ? theme.accent : theme.textPrimary)
+                    .padding(.vertical, 10)
+                    .padding(.horizontal, 12)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(profile == currentProfileName ? theme.surfaceAlt : Color.clear)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+
+            Button {
+                newProfileName = ""
+                showAddProfilePrompt = true
+            } label: {
+                HStack(spacing: 10) {
+                    Image(systemName: "plus.circle")
+                    Text("Add Page")
+                        .font(.custom("Avenir Next", size: 15).weight(.semibold))
+                    Spacer()
+                }
+                .foregroundStyle(theme.textSecondary)
+                .padding(.vertical, 10)
+                .padding(.horizontal, 12)
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 64)
+        .frame(width: sidePanelWidth, alignment: .topLeading)
+        .frame(maxHeight: .infinity, alignment: .topLeading)
+        .background(
+            Rectangle()
+                .fill(theme.surface)
+                .ignoresSafeArea()
+                .shadow(color: theme.shadow.opacity(0.35), radius: 16, x: 6, y: 0)
+        )
+    }
+
+    private func sidePanelItem(index: Int, title: String, icon: String) -> some View {
+        Button {
+            selectedTab = index
+            withAnimation(.easeInOut(duration: 0.2)) {
+                showSidePanel = false
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 17, weight: .semibold))
+                    .frame(width: 24)
+
+                Text(title)
+                    .font(.custom("Avenir Next", size: 16).weight(.semibold))
+
+                Spacer()
+            }
+            .foregroundStyle(selectedTab == index ? theme.accent : theme.textPrimary)
+            .padding(.vertical, 12)
+            .padding(.horizontal, 12)
+            .background(
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .fill(selectedTab == index ? theme.surfaceAlt : Color.clear)
+            )
         }
         .buttonStyle(.plain)
     }
@@ -319,7 +518,7 @@ struct DashboardScreen: View {
 
             } else {
                 LazyVStack(spacing: 10) {
-                    ForEach(filteredTransactions.prefix(50)) { txn in
+                    ForEach(filteredTransactions.prefix(maxRecentTransactions)) { txn in
                         transactionRow(txn)
                     }
                 }
@@ -331,24 +530,36 @@ struct DashboardScreen: View {
     // MARK: - Transaction Row
 
     private func transactionRow(_ txn: Transaction) -> some View {
-        let isExpense = txn.type == .expense
+        let isTransfer = txn.type == .transfer
+        let isTransferOut = isTransfer && txn.categoryName == "Transfer Out"
+        let isExpense = txn.type == .expense || isTransferOut
+        let amountColor: Color = isTransfer ? (isTransferOut ? theme.negative : theme.positive) : (isExpense ? theme.negative : theme.positive)
         let acct = vm.accounts.first(where: { $0.id == txn.accountId })
         let categoryName = txn.categoryName.isEmpty ? (txn.category?.rawValue ?? "Other") : txn.categoryName
+        let iconName = isTransfer ? "arrow.left.arrow.right.circle.fill" : TransactionCategory.iconSystemName(for: categoryName)
+        let transferCounterparty = isTransfer ? txn.note : ""
 
         return HStack(spacing: 14) {
             Circle()
-                .fill((isExpense ? theme.negative : theme.positive).opacity(0.12))
+                .fill(amountColor.opacity(0.12))
                 .frame(width: 40, height: 40)
                 .overlay(
-                    Image(systemName: TransactionCategory.iconSystemName(for: categoryName))
+                    Image(systemName: iconName)
                         .font(.system(size: 16))
-                        .foregroundStyle(isExpense ? theme.negative : theme.positive)
+                        .foregroundStyle(amountColor)
                 )
 
             VStack(alignment: .leading, spacing: 4) {
                 Text(categoryName)
                     .font(.custom("Avenir Next", size: 15).weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
+
+                if !transferCounterparty.isEmpty {
+                    Text(transferCounterparty)
+                        .font(.custom("Avenir Next", size: 12).weight(.semibold))
+                        .foregroundStyle(theme.textSecondary)
+                        .lineLimit(1)
+                }
 
                 if let acct {
                     HStack(spacing: 6) {
@@ -373,7 +584,7 @@ struct DashboardScreen: View {
             VStack(alignment: .trailing, spacing: 4) {
                 Text("\(isExpense ? "−" : "+")\(CurrencyFormatter.sgd(amount: txn.amount))")
                     .font(.custom("Avenir Next", size: 16).weight(.bold))
-                    .foregroundStyle(isExpense ? theme.negative : theme.positive)
+                    .foregroundStyle(amountColor)
 
                 Text(txn.date, style: .date)
                     .font(.custom("Avenir Next", size: 11))
@@ -549,6 +760,31 @@ struct DashboardScreen: View {
                             .fill(theme.surface)
                     )
 
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Transaction Categories")
+                            .font(.custom("Avenir Next", size: 16).weight(.semibold))
+                            .foregroundStyle(theme.textPrimary)
+
+                        Picker("Preset", selection: Binding(
+                            get: { CategoryPreset(rawValue: categoryPresetRaw) ?? .singapore },
+                            set: { categoryPresetRaw = $0.rawValue }
+                        )) {
+                            ForEach(CategoryPreset.allCases) { preset in
+                                Text(preset.rawValue).tag(preset)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+
+                        Text("Singapore: local-first • Generic: broad standard • Minimal: fewer choices")
+                            .font(.custom("Avenir Next", size: 12))
+                            .foregroundStyle(theme.textTertiary)
+                    }
+                    .padding(14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14)
+                            .fill(theme.surface)
+                    )
+
                     Spacer()
                 }
                 .padding(20)
@@ -563,6 +799,20 @@ struct DashboardScreen: View {
                 }
             }
         }
+    }
+
+    private func addProfile() {
+        let trimmed = newProfileName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard trackingProfiles.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) == false else {
+            currentProfileRaw = trackingProfiles.first(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) ?? currentProfileRaw
+            newProfileName = ""
+            return
+        }
+        let updated = trackingProfiles + [trimmed]
+        trackingProfilesRaw = updated.joined(separator: "|")
+        currentProfileRaw = trimmed
+        newProfileName = ""
     }
 
     private var subscriptionSheet: some View {
@@ -722,6 +972,8 @@ struct DashboardScreen: View {
     private var moreTab: some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack {
+                Color.clear
+                    .frame(width: 34, height: 34)
                 Text("More")
                     .font(.custom("Avenir Next", size: 22).weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
@@ -805,8 +1057,8 @@ struct DashboardScreen: View {
             .buttonStyle(.plain)
             .padding(.horizontal, 18)
 
-            Spacer(minLength: 90)
+            Spacer(minLength: 24)
         }
-        .padding(.bottom, 110)
+        .padding(.bottom, 32)
     }
 }

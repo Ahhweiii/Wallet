@@ -62,13 +62,14 @@ struct ManageCategoriesScreen: View {
                     .onTapGesture {
                         selectedCategory = item
                     }
-                }
-                .onDelete { indexSet in
-                    let items = items
-                    for index in indexSet {
-                        modelContext.delete(items[index])
+                    .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                        Button(role: .destructive) {
+                            modelContext.delete(item)
+                            try? modelContext.save()
+                        } label: {
+                            Label("Delete", systemImage: "trash")
+                        }
                     }
-                    try? modelContext.save()
                 }
             }
         } header: {

@@ -17,17 +17,46 @@ struct AccountDetailScreen: View {
 
     @State private var showEditSheet: Bool = false
     @State private var showDeleteConfirm: Bool = false
+    @State private var editingTransaction: Transaction? = nil
+    @State private var showAddTransactionSheet: Bool = false
+    @State private var selectedMonthStart: Date = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: Date())) ?? Date()
 
     private var account: Account? {
         vm.accounts.first(where: { $0.id == accountId })
     }
 
-    private var accountTransactions: [Transaction] {
-        vm.transactions(for: accountId).sorted { $0.date > $1.date }
+    private var allAccountTransactions: [Transaction] {
+        vm.transactions(for: accountId)
     }
 
-    private var totalSpentThisAccount: Decimal {
-        vm.totalSpent(for: accountId)
+    private var monthOptions: [Date] {
+        var months = Set(allAccountTransactions.map { startOfMonth($0.date) })
+        months.insert(startOfMonth(Date()))
+        return months.sorted(by: >)
+    }
+
+    private var accountTransactions: [Transaction] {
+        let range = monthRange(for: selectedMonthStart)
+        return allAccountTransactions.filter { $0.date >= range.start && $0.date <= range.end }
+    }
+
+    private var selectedMonthOffset: Int {
+        let cal = Calendar.current
+        let currentMonth = startOfMonth(Date())
+        let selectedMonth = startOfMonth(selectedMonthStart)
+        return cal.dateComponents([.month], from: currentMonth, to: selectedMonth).month ?? 0
+    }
+
+    private var totalSpentThisAccountForBillingCycle: Decimal {
+        vm.periodExpenses(for: accountId, monthOffset: selectedMonthOffset)
+    }
+
+    private var totalIncomeThisAccountForBillingCycle: Decimal {
+        vm.periodIncome(for: accountId, monthOffset: selectedMonthOffset)
+    }
+
+    private var netCreditUsedThisAccount: Decimal {
+        max(Decimal.zero, totalSpentThisAccountForBillingCycle - totalIncomeThisAccountForBillingCycle)
     }
 
     private var totalCreditToDisplay: Decimal {
@@ -92,6 +121,16 @@ struct AccountDetailScreen: View {
                                 transactionRow(txn)
                                     .listRowInsets(EdgeInsets(top: 6, leading: 18, bottom: 6, trailing: 18))
                                     .listRowBackground(Color.clear)
+                                    .swipeActions(edge: .leading, allowsFullSwipe: false) {
+                                        if txn.type != .transfer {
+                                            Button {
+                                                editingTransaction = txn
+                                            } label: {
+                                                Label("Edit", systemImage: "pencil")
+                                            }
+                                            .tint(theme.accent)
+                                        }
+                                    }
                                     .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                         Button(role: .destructive) {
                                             vm.deleteTransaction(txn)
@@ -102,10 +141,7 @@ struct AccountDetailScreen: View {
                             }
                         }
                     } header: {
-                        Text("Transactions (This Card)")
-                            .font(.system(size: 18, weight: .bold))
-                            .foregroundStyle(theme.textPrimary)
-                            .textCase(nil)
+                        transactionsHeader
                     }
                 }
                 .listStyle(.plain)
@@ -123,6 +159,13 @@ struct AccountDetailScreen: View {
             ToolbarItem(placement: .topBarTrailing) {
                 if account != nil {
                     HStack {
+                        Button {
+                            showAddTransactionSheet = true
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .foregroundStyle(theme.accent)
+
                         Button("Edit") { showEditSheet = true }
                             .foregroundStyle(theme.accent)
 
@@ -162,6 +205,18 @@ struct AccountDetailScreen: View {
                                      colorHex: colorHex)
                 }
             }
+        }
+        .sheet(isPresented: $showAddTransactionSheet) {
+            AddTransactionScreen(vm: vm, fixedAccountId: accountId) { }
+        }
+        .sheet(item: $editingTransaction) { txn in
+            EditTransactionScreen(vm: vm, transaction: txn) { }
+        }
+        .onAppear {
+            ensureValidSelectedMonth()
+        }
+        .onChange(of: vm.transactions.count) { _, _ in
+            ensureValidSelectedMonth()
         }
     }
 
@@ -237,7 +292,7 @@ struct AccountDetailScreen: View {
     private var totalSummaryCard: some View {
         VStack(spacing: 14) {
             HStack {
-                Text("Total Summary (This Card)")
+                Text(account?.type == .cash ? "Cash Summary" : "Total Summary (This Card)")
                     .font(.system(size: 18, weight: .bold))
                     .foregroundStyle(theme.textPrimary)
                 Spacer()
@@ -245,30 +300,44 @@ struct AccountDetailScreen: View {
 
             Divider().overlay(theme.divider)
 
-            Text("Total Spent")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(theme.textSecondary)
+            if account?.type == .cash {
+                Text("Total Amount")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
 
-            Text(CurrencyFormatter.sgd(amount: totalSpentThisAccount))
-                .font(.system(size: 36, weight: .bold))
-                .foregroundStyle(theme.negative)
+                Text(CurrencyFormatter.sgd(amount: account?.amount ?? 0))
+                    .font(.system(size: 36, weight: .bold))
+                    .foregroundStyle(theme.positive)
+            } else {
+                Text("Net Used Credit")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
+
+                Text(CurrencyFormatter.sgd(amount: netCreditUsedThisAccount))
+                    .font(.system(size: 36, weight: .bold))
+                    .foregroundStyle(theme.negative)
+            }
         }
         .padding(18)
         .background(RoundedRectangle(cornerRadius: 18, style: .continuous).fill(theme.card))
     }
 
     private func transactionRow(_ txn: Transaction) -> some View {
-        let isExpense = txn.type == .expense
+        let isTransfer = txn.type == .transfer
+        let isTransferOut = isTransfer && txn.categoryName == "Transfer Out"
+        let isExpense = txn.type == .expense || isTransferOut
+        let amountColor: Color = isTransfer ? (isTransferOut ? theme.negative : theme.positive) : (isExpense ? theme.negative : theme.positive)
         let categoryName = txn.categoryName.isEmpty ? (txn.category?.rawValue ?? "Other") : txn.categoryName
+        let iconName = isTransfer ? "arrow.left.arrow.right.circle.fill" : TransactionCategory.iconSystemName(for: categoryName)
 
         return HStack(spacing: 14) {
             Circle()
-                .fill((isExpense ? theme.negative : theme.positive).opacity(0.12))
+                .fill(amountColor.opacity(0.12))
                 .frame(width: 40, height: 40)
                 .overlay(
-                    Image(systemName: TransactionCategory.iconSystemName(for: categoryName))
+                    Image(systemName: iconName)
                         .font(.system(size: 16))
-                        .foregroundStyle(isExpense ? theme.negative : theme.positive)
+                        .foregroundStyle(amountColor)
                 )
 
             VStack(alignment: .leading, spacing: 4) {
@@ -292,9 +361,60 @@ struct AccountDetailScreen: View {
 
             Text("\(isExpense ? "−" : "+")\(CurrencyFormatter.sgd(amount: txn.amount))")
                 .font(.system(size: 16, weight: .bold))
-                .foregroundStyle(isExpense ? theme.negative : theme.positive)
+                .foregroundStyle(amountColor)
         }
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 14).fill(theme.card))
+    }
+
+    private var transactionsHeader: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Transactions")
+                .font(.system(size: 18, weight: .bold))
+                .foregroundStyle(theme.textPrimary)
+                .textCase(nil)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(monthOptions, id: \.self) { month in
+                        monthChip(month)
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+        }
+    }
+
+    private func monthChip(_ month: Date) -> some View {
+        let isSelected = Calendar.current.isDate(month, equalTo: selectedMonthStart, toGranularity: .month)
+        return Button {
+            selectedMonthStart = month
+        } label: {
+            Text(month.formatted(.dateTime.month(.abbreviated).year()))
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(isSelected ? .white : theme.textSecondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Capsule().fill(isSelected ? theme.accent : theme.surfaceAlt))
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func startOfMonth(_ date: Date) -> Date {
+        Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: date)) ?? date
+    }
+
+    private func monthRange(for month: Date) -> (start: Date, end: Date) {
+        let start = startOfMonth(month)
+        let next = Calendar.current.date(byAdding: .month, value: 1, to: start) ?? start
+        return (start, next.addingTimeInterval(-1))
+    }
+
+    private func ensureValidSelectedMonth() {
+        let selected = startOfMonth(selectedMonthStart)
+        let valid = monthOptions.contains { Calendar.current.isDate($0, equalTo: selected, toGranularity: .month) }
+        if !valid, let first = monthOptions.first {
+            selectedMonthStart = first
+        }
     }
 }

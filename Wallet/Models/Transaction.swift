@@ -11,6 +11,14 @@ import SwiftData
 enum TransactionType: String, CaseIterable, Identifiable, Hashable, Codable {
     case expense = "Expense"
     case income = "Income"
+    case transfer = "Transfer"
+    var id: String { rawValue }
+}
+
+enum CategoryPreset: String, CaseIterable, Identifiable, Hashable, Codable {
+    case singapore = "Singapore"
+    case generic = "Generic"
+    case minimal = "Minimal"
     var id: String { rawValue }
 }
 
@@ -117,6 +125,39 @@ enum TransactionCategory: String, CaseIterable, Identifiable, Hashable, Codable 
 
     static var incomeCategories: [TransactionCategory] {
         [.salary, .bonus, .freelance, .investment, .dividends, .interest, .rental, .gift, .other]
+    }
+
+    static var sgEssentialExpenseCategories: [TransactionCategory] {
+        [
+            .hawker,
+            .food,
+            .groceries,
+            .transportPublic,
+            .transportPrivate,
+            .housing,
+            .utilities,
+            .telco,
+            .insurance,
+            .health,
+            .family,
+            .education
+        ]
+    }
+
+    static var lifestyleExpenseCategories: [TransactionCategory] {
+        [
+            .shopping,
+            .entertainment,
+            .subscriptions,
+            .donations,
+            .travel,
+            .other
+        ]
+    }
+
+    // Keep legacy categories selectable to preserve compatibility with older data/backups.
+    static var legacyExpenseCategories: [TransactionCategory] {
+        [.transport, .bills]
     }
 }
 

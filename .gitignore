@@ -1,9 +1,9 @@
-cat > .gitignore <<'EOF'
 # Xcode
 .DS_Store
 xcuserdata/
 *.xcuserstate
 DerivedData/
+.deriveddata/
 .build/
 *.moved-aside
 *.xccheckout
@@ -25,4 +25,3 @@ fastlane/test_output
 
 # Secrets
 *.env
-EOF

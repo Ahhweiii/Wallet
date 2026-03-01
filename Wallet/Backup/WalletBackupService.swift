@@ -87,6 +87,7 @@ enum WalletBackupService {
                 existing.colorHex = dto.colorHex
                 existing.iconSystemName = dto.iconSystemName
                 existing.isInCombinedCreditPool = dto.isInCombinedCreditPool
+                existing.profileName = dto.profileName
                 existing.billingCycleStartDay = dto.billingCycleStartDay
             } else {
                 let new = Account(
@@ -99,6 +100,7 @@ enum WalletBackupService {
                     colorHex: dto.colorHex,
                     iconSystemName: dto.iconSystemName,
                     isInCombinedCreditPool: dto.isInCombinedCreditPool,
+                    profileName: dto.profileName,
                     billingCycleStartDay: dto.billingCycleStartDay
                 )
                 modelContext.insert(new)
@@ -136,24 +138,36 @@ enum WalletBackupService {
                 if let existing = fixedById[dto.id] {
                     existing.name = dto.name
                     existing.amount = dto.amount
+                    existing.outstandingAmount = dto.outstandingAmount
                     existing.type = dto.type
                     existing.typeName = dto.typeName
                     existing.frequency = dto.frequency
                     existing.startDate = dto.startDate
                     existing.endDate = dto.endDate
                     existing.cycles = dto.cycles
+                    existing.chargeAccountId = dto.chargeAccountId
+                    existing.chargeDay = dto.chargeDay
+                    existing.chargeDate = dto.chargeDate
+                    existing.lastChargedAt = dto.lastChargedAt
+                    existing.profileName = dto.profileName
                     existing.note = dto.note
                 } else {
                     let new = FixedPayment(
                         id: dto.id,
                         name: dto.name,
                         amount: dto.amount,
+                        outstandingAmount: dto.outstandingAmount,
                         type: dto.type,
                         typeName: dto.typeName,
                         frequency: dto.frequency,
                         startDate: dto.startDate,
                         endDate: dto.endDate,
                         cycles: dto.cycles,
+                        chargeAccountId: dto.chargeAccountId,
+                        chargeDay: dto.chargeDay,
+                        chargeDate: dto.chargeDate,
+                        lastChargedAt: dto.lastChargedAt,
+                        profileName: dto.profileName,
                         note: dto.note
                     )
                     modelContext.insert(new)
