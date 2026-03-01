@@ -1,13 +1,13 @@
 //
-//  LedgerFlowUITests.swift
-//  LedgerFlowUITests
+//  FrugalPilotUITests.swift
+//  FrugalPilotUITests
 //
 //  Created by Lee Jun Wei on 21/2/26.
 //
 
 import XCTest
 
-final class LedgerFlowUITests: XCTestCase {
+final class FrugalPilotUITests: XCTestCase {
 
     override func setUpWithError() throws {
         // Put setup code here. This method is called before the invocation of each test method in the class.

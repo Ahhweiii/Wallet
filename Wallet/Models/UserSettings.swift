@@ -1,6 +1,6 @@
 //
 //  UserSettings.swift
-//  LedgerFlow
+//  FrugalPilot
 //
 //  Created by Lee Jun Wei on 27/2/26.
 //

@@ -1,6 +1,6 @@
 //
 //  DashboardViewModel.swift
-//  LedgerFlow
+//  FrugalPilot
 //
 //  Created by Lee Jun Wei on 22/2/26.
 //
@@ -1068,7 +1068,7 @@ final class DashboardViewModel: ObservableObject {
         let latestTransactions = try modelContext.fetch(FetchDescriptor<Transaction>())
         let latestFixed = try modelContext.fetch(FetchDescriptor<FixedPayment>())
         let latestCustom = try modelContext.fetch(FetchDescriptor<CustomCategory>())
-        return try LedgerFlowBackupService.exportJSON(accounts: latestAccounts,
+        return try FrugalPilotBackupService.exportJSON(accounts: latestAccounts,
                                                  transactions: latestTransactions,
                                                  fixedPayments: latestFixed,
                                                  customCategories: latestCustom)
@@ -1126,7 +1126,7 @@ final class DashboardViewModel: ObservableObject {
             return reminder.profileName.lowercased() == normalizedProfileLower
         }
 
-        return try LedgerFlowBackupService.exportJSON(accounts: filteredAccounts,
+        return try FrugalPilotBackupService.exportJSON(accounts: filteredAccounts,
                                                  transactions: filteredTransactions,
                                                  fixedPayments: filteredFixed,
                                                  customCategories: latestCustom,
@@ -1136,9 +1136,9 @@ final class DashboardViewModel: ObservableObject {
                                                  billReminders: reminders)
     }
 
-    func importBackupJSON(data: Data, strategy: LedgerFlowImportStrategy) throws {
-        let file = try LedgerFlowBackupService.decodeBackup(from: data)
-        try LedgerFlowBackupService.import(file, into: modelContext, strategy: strategy)
+    func importBackupJSON(data: Data, strategy: FrugalPilotImportStrategy) throws {
+        let file = try FrugalPilotBackupService.decodeBackup(from: data)
+        try FrugalPilotBackupService.import(file, into: modelContext, strategy: strategy)
         fetchAll()
     }
 

@@ -1,6 +1,6 @@
 //
 //  ContentView.swift
-//  LedgerFlow
+//  FrugalPilot
 //
 //  Created by Lee Jun Wei on 21/2/26.
 //
@@ -87,7 +87,7 @@ struct ContentView: View {
         let context = LAContext()
         var error: NSError?
         if context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) {
-            context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock LedgerFlow") { success, _ in
+            context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: "Unlock FrugalPilot") { success, _ in
                 DispatchQueue.main.async {
                     if success {
                         isUnlocked = true

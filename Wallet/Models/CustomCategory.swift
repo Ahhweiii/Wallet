@@ -1,6 +1,6 @@
 //
 //  CustomCategory.swift
-//  LedgerFlow
+//  FrugalPilot
 //
 //  Created by Codex on 27/2/26.
 //

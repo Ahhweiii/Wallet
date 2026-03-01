@@ -1,6 +1,6 @@
 //
 //  AddAccountScreen.swift
-//  LedgerFlow
+//  FrugalPilot
 //
 //  Created by Lee Jun Wei on 22/2/26.
 //

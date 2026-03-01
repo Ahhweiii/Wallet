@@ -1,6 +1,6 @@
 //
 //  EditTransactionScreen.swift
-//  LedgerFlow
+//  FrugalPilot
 //
 //  Created by Codex on 28/2/26.
 //

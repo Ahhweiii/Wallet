@@ -1,6 +1,6 @@
 //
-//  LedgerFlowApp.swift
-//  LedgerFlow
+//  FrugalPilotApp.swift
+//  FrugalPilot
 //
 //  Created by Lee Jun Wei on 21/2/26.
 //
@@ -9,12 +9,12 @@ import SwiftUI
 import SwiftData
 
 @main
-struct LedgerFlowApp: App {
+struct FrugalPilotApp: App {
     @State private var container: ModelContainer
 
     init() {
         let isPro = SubscriptionManager.hasICloudSync
-        _container = State(initialValue: LedgerFlowApp.makeContainerWithRecovery(proEnabled: isPro))
+        _container = State(initialValue: FrugalPilotApp.makeContainerWithRecovery(proEnabled: isPro))
     }
 
     var body: some Scene {
@@ -52,9 +52,9 @@ struct LedgerFlowApp: App {
 
     private static func storeURL() -> URL {
         let dir = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
-        let appDir = dir.appendingPathComponent("LedgerFlow", isDirectory: true)
+        let appDir = dir.appendingPathComponent("FrugalPilot", isDirectory: true)
         try? FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
-        return appDir.appendingPathComponent("LedgerFlow.store")
+        return appDir.appendingPathComponent("FrugalPilot.store")
     }
 
     private static func resetLocalStore() -> Bool {

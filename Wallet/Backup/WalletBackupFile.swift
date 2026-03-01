@@ -1,6 +1,6 @@
 //
-//  LedgerFlowBackupFile.swift
-//  LedgerFlow
+//  FrugalPilotBackupFile.swift
+//  FrugalPilot
 //
 //  Created by Lee Jun Wei on 26/2/26.
 //
@@ -9,7 +9,7 @@ import Foundation
 
 /// Backup file format (Codable) independent of SwiftData.
 /// Preserves UUIDs so re-import keeps identity.
-struct LedgerFlowBackupFile: Codable {
+struct FrugalPilotBackupFile: Codable {
     static let currentVersion = 1
 
     var version: Int

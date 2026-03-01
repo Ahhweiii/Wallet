@@ -1,6 +1,6 @@
 //
-//  LedgerFlowBackupService.swift
-//  LedgerFlow
+//  FrugalPilotBackupService.swift
+//  FrugalPilot
 //
 //  Created by Lee Jun Wei on 26/2/26.
 //
@@ -8,12 +8,12 @@
 import Foundation
 import SwiftData
 
-enum LedgerFlowImportStrategy {
+enum FrugalPilotImportStrategy {
     case merge
     case replaceAll
 }
 
-enum LedgerFlowBackupError: Error, LocalizedError {
+enum FrugalPilotBackupError: Error, LocalizedError {
     case unsupportedVersion(Int)
     case invalidData
 
@@ -27,7 +27,7 @@ enum LedgerFlowBackupError: Error, LocalizedError {
     }
 }
 
-enum LedgerFlowBackupService {
+enum FrugalPilotBackupService {
 
     // ✅ MainActor because we read SwiftData @Model objects
     @MainActor
@@ -44,7 +44,7 @@ enum LedgerFlowBackupService {
         let resolvedGoals = savingsGoals ?? SmartDataStore.loadGoals()
         let resolvedReminders = billReminders ?? SmartDataStore.loadReminders()
 
-        let file = LedgerFlowBackupFile(
+        let file = FrugalPilotBackupFile(
             accounts: accounts.map(AccountDTO.init(from:)),
             transactions: transactions.map(TransactionDTO.init(from:)),
             fixedPayments: fixedPayments.map(FixedPaymentDTO.init(from:)),
@@ -61,21 +61,21 @@ enum LedgerFlowBackupService {
         return try encoder.encode(file)
     }
 
-    static func decodeBackup(from data: Data) throws -> LedgerFlowBackupFile {
+    static func decodeBackup(from data: Data) throws -> FrugalPilotBackupFile {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let file = try decoder.decode(LedgerFlowBackupFile.self, from: data)
+        let file = try decoder.decode(FrugalPilotBackupFile.self, from: data)
 
-        guard file.version == LedgerFlowBackupFile.currentVersion else {
-            throw LedgerFlowBackupError.unsupportedVersion(file.version)
+        guard file.version == FrugalPilotBackupFile.currentVersion else {
+            throw FrugalPilotBackupError.unsupportedVersion(file.version)
         }
         return file
     }
 
     @MainActor
-    static func `import`(_ file: LedgerFlowBackupFile,
+    static func `import`(_ file: FrugalPilotBackupFile,
                         into modelContext: ModelContext,
-                        strategy: LedgerFlowImportStrategy) throws {
+                        strategy: FrugalPilotImportStrategy) throws {
         if case .replaceAll = strategy {
             try deleteAll(modelContext: modelContext)
         }

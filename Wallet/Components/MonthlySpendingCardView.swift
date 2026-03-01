@@ -1,6 +1,6 @@
 //
 //  MonthlySpendingCardView.swift
-//  LedgerFlow
+//  FrugalPilot
 //
 
 import SwiftUI

@@ -1,6 +1,6 @@
 //
 //  SmartDataStore.swift
-//  LedgerFlow
+//  FrugalPilot
 //
 //  Created by Codex on 1/3/26.
 //

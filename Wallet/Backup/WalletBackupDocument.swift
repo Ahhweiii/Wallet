@@ -1,6 +1,6 @@
 //
-//  LedgerFlowBackupDocument.swift
-//  LedgerFlow
+//  FrugalPilotBackupDocument.swift
+//  FrugalPilot
 //
 //  Created by Lee Jun Wei on 26/2/26.
 //
@@ -8,7 +8,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct LedgerFlowBackupDocument: FileDocument {
+struct FrugalPilotBackupDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
 
     var data: Data

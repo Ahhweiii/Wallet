@@ -1,6 +1,6 @@
 //
 //  DashboardScreen.swift
-//  LedgerFlow
+//  FrugalPilot
 //
 //  Created by Lee Jun Wei on 21/2/26.
 //
@@ -49,8 +49,8 @@ struct DashboardScreen: View {
     @State private var showNotificationsSheet = false
     @State private var showBackupExporter = false
     @State private var showBackupImporter = false
-    @State private var exportBackupDocument = LedgerFlowBackupDocument()
-    @State private var exportFilename = "LedgerFlowBackup.json"
+    @State private var exportBackupDocument = FrugalPilotBackupDocument()
+    @State private var exportFilename = "FrugalPilotBackup.json"
     @State private var pendingImportData: Data? = nil
     @State private var showImportStrategyDialog = false
 
@@ -59,7 +59,6 @@ struct DashboardScreen: View {
     @State private var showProInfo = false
     @State private var showICloudInfo = false
     @State private var showAppLockInfo = false
-    @State private var showNotificationsInfo = false
     @State private var showAddProfilePrompt = false
     @State private var showDeleteProfileDialog = false
     @State private var pendingDeleteProfile: String? = nil
@@ -129,7 +128,11 @@ struct DashboardScreen: View {
     }
 
     private var filteredTransactions: [Transaction] {
-        vm.transactions.filter { txn in
+        let normalizedQuery = transactionSearchText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let accountNameById = Dictionary(uniqueKeysWithValues: vm.accounts.map { ($0.id, $0.displayName.lowercased()) })
+        return vm.transactions.filter { txn in
             let byType: Bool = {
                 switch transactionFilterType {
                 case .all: return true
@@ -140,13 +143,11 @@ struct DashboardScreen: View {
             }()
             guard byType else { return false }
 
-            let query = transactionSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !query.isEmpty else { return true }
-            let normalized = query.lowercased()
-            let accountName = vm.accounts.first(where: { $0.id == txn.accountId })?.displayName.lowercased() ?? ""
-            return txn.categoryName.lowercased().contains(normalized)
-                || txn.note.lowercased().contains(normalized)
-                || accountName.contains(normalized)
+            guard !normalizedQuery.isEmpty else { return true }
+            let accountName = accountNameById[txn.accountId] ?? ""
+            return txn.categoryName.lowercased().contains(normalizedQuery)
+                || txn.note.lowercased().contains(normalizedQuery)
+                || accountName.contains(normalizedQuery)
         }
     }
 
@@ -212,7 +213,7 @@ struct DashboardScreen: View {
             .sheet(isPresented: $showSubscriptionSheet) { subscriptionSheet }
             .sheet(isPresented: $showBackupSheet) { backupSheet }
             .sheet(isPresented: $showSmartToolsSheet) {
-                SmartToolsScreen(currentProfileName: currentProfileName, vm: vm)
+                SmartToolsScreen(currentProfileName: currentProfileName)
             }
             .sheet(isPresented: $showNotificationsSheet) {
                 notificationsSheet
@@ -240,11 +241,6 @@ struct DashboardScreen: View {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text("App Lock is available on Pro and Lifetime.")
-            }
-            .alert("Notifications", isPresented: $showNotificationsInfo) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text("No notifications right now.")
             }
             .alert("New Profile", isPresented: $showAddProfilePrompt) {
                 TextField("e.g. Side Hustle", text: $newProfileName)
@@ -417,7 +413,7 @@ struct DashboardScreen: View {
             menuButton
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("LedgerFlow")
+                Text("FrugalPilot")
                     .font(.custom("Avenir Next", size: 22).weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
                 Menu {
@@ -787,8 +783,8 @@ struct DashboardScreen: View {
                                 return
                             }
 
-                            exportBackupDocument = LedgerFlowBackupDocument(data: data)
-                            exportFilename = "LedgerFlowBackup-\(safeTimestampString).json"
+                            exportBackupDocument = FrugalPilotBackupDocument(data: data)
+                            exportFilename = "FrugalPilotBackup-\(safeTimestampString).json"
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                                 showBackupExporter = true
                             }
@@ -833,8 +829,8 @@ struct DashboardScreen: View {
                                 let data = try vm.exportBackupJSON(profileName: currentProfileName,
                                                                    from: nil,
                                                                    to: nil)
-                                exportBackupDocument = LedgerFlowBackupDocument(data: data)
-                                exportFilename = "LedgerFlowPack-\(currentProfileName)-All-\(safeTimestampString).json"
+                                exportBackupDocument = FrugalPilotBackupDocument(data: data)
+                                exportFilename = "FrugalPilotPack-\(currentProfileName)-All-\(safeTimestampString).json"
                                 showBackupExporter = true
                             } catch {
                                 presentError(error)
@@ -848,8 +844,8 @@ struct DashboardScreen: View {
                                 let data = try vm.exportBackupJSON(profileName: currentProfileName,
                                                                    from: start,
                                                                    to: end)
-                                exportBackupDocument = LedgerFlowBackupDocument(data: data)
-                                exportFilename = "LedgerFlowPack-\(currentProfileName)-90d-\(safeTimestampString).json"
+                                exportBackupDocument = FrugalPilotBackupDocument(data: data)
+                                exportFilename = "FrugalPilotPack-\(currentProfileName)-90d-\(safeTimestampString).json"
                                 showBackupExporter = true
                             } catch {
                                 presentError(error)
@@ -1235,7 +1231,7 @@ struct DashboardScreen: View {
 
     // MARK: - Helpers
 
-    private func runImport(strategy: LedgerFlowImportStrategy) {
+    private func runImport(strategy: FrugalPilotImportStrategy) {
         guard let data = pendingImportData else { return }
         pendingImportData = nil
 

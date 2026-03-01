@@ -1,6 +1,6 @@
 //
 //  SmartToolsScreen.swift
-//  LedgerFlow
+//  FrugalPilot
 //
 //  Created by Codex on 1/3/26.
 //
@@ -10,7 +10,6 @@ import SwiftData
 
 struct SmartToolsScreen: View {
     let currentProfileName: String
-    @ObservedObject var vm: DashboardViewModel
 
     @Environment(\.dismiss) private var dismiss
     @Environment(\.appTheme) private var theme
