@@ -1,6 +1,6 @@
 //
-//  WalletBackupDocument.swift
-//  Wallet
+//  LedgerFlowBackupDocument.swift
+//  LedgerFlow
 //
 //  Created by Lee Jun Wei on 26/2/26.
 //
@@ -8,7 +8,7 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-struct WalletBackupDocument: FileDocument {
+struct LedgerFlowBackupDocument: FileDocument {
     static var readableContentTypes: [UTType] { [.json] }
 
     var data: Data

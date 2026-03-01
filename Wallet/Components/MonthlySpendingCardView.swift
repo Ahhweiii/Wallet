@@ -1,6 +1,6 @@
 //
 //  MonthlySpendingCardView.swift
-//  Wallet
+//  LedgerFlow
 //
 
 import SwiftUI

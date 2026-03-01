@@ -1,6 +1,6 @@
 //
 //  AccountCardView.swift
-//  Wallet
+//  LedgerFlow
 //
 //  Created by Lee Jun Wei on 21/2/26.
 //

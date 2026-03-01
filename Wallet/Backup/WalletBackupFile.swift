@@ -1,6 +1,6 @@
 //
-//  WalletBackupFile.swift
-//  Wallet
+//  LedgerFlowBackupFile.swift
+//  LedgerFlow
 //
 //  Created by Lee Jun Wei on 26/2/26.
 //
@@ -9,7 +9,7 @@ import Foundation
 
 /// Backup file format (Codable) independent of SwiftData.
 /// Preserves UUIDs so re-import keeps identity.
-struct WalletBackupFile: Codable {
+struct LedgerFlowBackupFile: Codable {
     static let currentVersion = 1
 
     var version: Int
@@ -18,18 +18,30 @@ struct WalletBackupFile: Codable {
     var transactions: [TransactionDTO]
     var fixedPayments: [FixedPaymentDTO]?
     var customCategories: [CustomCategoryDTO]?
+    var autoCategoryRules: [AutoCategoryRuleData]?
+    var budgets: [BudgetEnvelopeData]?
+    var savingsGoals: [SavingsGoalData]?
+    var billReminders: [BillReminderData]?
 
     init(exportedAt: Date = Date(),
          accounts: [AccountDTO],
          transactions: [TransactionDTO],
          fixedPayments: [FixedPaymentDTO]? = nil,
-         customCategories: [CustomCategoryDTO]? = nil) {
+         customCategories: [CustomCategoryDTO]? = nil,
+         autoCategoryRules: [AutoCategoryRuleData]? = nil,
+         budgets: [BudgetEnvelopeData]? = nil,
+         savingsGoals: [SavingsGoalData]? = nil,
+         billReminders: [BillReminderData]? = nil) {
         self.version = Self.currentVersion
         self.exportedAt = exportedAt
         self.accounts = accounts
         self.transactions = transactions
         self.fixedPayments = fixedPayments
         self.customCategories = customCategories
+        self.autoCategoryRules = autoCategoryRules
+        self.budgets = budgets
+        self.savingsGoals = savingsGoals
+        self.billReminders = billReminders
     }
 }
 

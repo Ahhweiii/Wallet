@@ -1,14 +1,14 @@
 //
-//  WalletTests.swift
-//  WalletTests
+//  LedgerFlowTests.swift
+//  LedgerFlowTests
 //
 //  Created by Lee Jun Wei on 21/2/26.
 //
 
 import XCTest
-@testable import Wallet
+@testable import LedgerFlow
 
-final class WalletTests: XCTestCase {
+final class LedgerFlowTests: XCTestCase {
 
     override func setUpWithError() throws {
         // Put setup code here. This method is called before the invocation of each test method in the class.

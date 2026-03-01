@@ -1,6 +1,6 @@
 //
 //  SelectAccountScreen.swift
-//  Wallet
+//  LedgerFlow
 //
 //  Created by Lee Jun Wei on 23/2/26.
 //

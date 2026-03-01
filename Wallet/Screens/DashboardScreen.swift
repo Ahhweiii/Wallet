@@ -1,6 +1,6 @@
 //
 //  DashboardScreen.swift
-//  Wallet
+//  LedgerFlow
 //
 //  Created by Lee Jun Wei on 21/2/26.
 //
@@ -14,6 +14,14 @@ private struct ScrollOffsetKey: PreferenceKey {
     static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
         value = nextValue()
     }
+}
+
+private enum TransactionFilterType: String, CaseIterable, Identifiable {
+    case all = "All"
+    case expense = "Expense"
+    case income = "Income"
+    case transfer = "Transfer"
+    var id: String { rawValue }
 }
 
 struct DashboardScreen: View {
@@ -37,10 +45,12 @@ struct DashboardScreen: View {
     @State private var showSettingsSheet = false
     @State private var showSubscriptionSheet = false
     @State private var showBackupSheet = false
+    @State private var showSmartToolsSheet = false
+    @State private var showNotificationsSheet = false
     @State private var showBackupExporter = false
     @State private var showBackupImporter = false
-    @State private var exportBackupDocument = WalletBackupDocument()
-    @State private var exportFilename = "WalletBackup.json"
+    @State private var exportBackupDocument = LedgerFlowBackupDocument()
+    @State private var exportFilename = "LedgerFlowBackup.json"
     @State private var pendingImportData: Data? = nil
     @State private var showImportStrategyDialog = false
 
@@ -54,6 +64,8 @@ struct DashboardScreen: View {
     @State private var showDeleteProfileDialog = false
     @State private var pendingDeleteProfile: String? = nil
     @State private var newProfileName = ""
+    @State private var transactionSearchText: String = ""
+    @State private var transactionFilterType: TransactionFilterType = .all
 
     private let maxPerPage: Int = 4
     private let maxRecentTransactions: Int = 20
@@ -117,7 +129,36 @@ struct DashboardScreen: View {
     }
 
     private var filteredTransactions: [Transaction] {
-        vm.transactions
+        vm.transactions.filter { txn in
+            let byType: Bool = {
+                switch transactionFilterType {
+                case .all: return true
+                case .expense: return txn.type == .expense
+                case .income: return txn.type == .income
+                case .transfer: return txn.type == .transfer
+                }
+            }()
+            guard byType else { return false }
+
+            let query = transactionSearchText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !query.isEmpty else { return true }
+            let normalized = query.lowercased()
+            let accountName = vm.accounts.first(where: { $0.id == txn.accountId })?.displayName.lowercased() ?? ""
+            return txn.categoryName.lowercased().contains(normalized)
+                || txn.note.lowercased().contains(normalized)
+                || accountName.contains(normalized)
+        }
+    }
+
+    private var dueReminderCount: Int {
+        let reminders = SmartDataStore.loadReminders()
+        let calendar = Calendar.current
+        let today = calendar.component(.day, from: Date())
+        return reminders.filter { reminder in
+            guard reminder.isEnabled else { return false }
+            guard reminder.profileName.trimmingCharacters(in: .whitespacesAndNewlines) == currentProfileName else { return false }
+            return reminder.chargeDay >= today && reminder.chargeDay <= (today + 3)
+        }.count
     }
 
     private var canAddAccount: Bool {
@@ -170,6 +211,12 @@ struct DashboardScreen: View {
             .sheet(isPresented: $showSettingsSheet) { settingsSheet }
             .sheet(isPresented: $showSubscriptionSheet) { subscriptionSheet }
             .sheet(isPresented: $showBackupSheet) { backupSheet }
+            .sheet(isPresented: $showSmartToolsSheet) {
+                SmartToolsScreen(currentProfileName: currentProfileName, vm: vm)
+            }
+            .sheet(isPresented: $showNotificationsSheet) {
+                notificationsSheet
+            }
     }
 
     private func applyDialogs<V: View>(_ view: V) -> some View {
@@ -370,7 +417,7 @@ struct DashboardScreen: View {
             menuButton
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("Wallet")
+                Text("LedgerFlow")
                     .font(.custom("Avenir Next", size: 22).weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
                 Menu {
@@ -415,9 +462,19 @@ struct DashboardScreen: View {
             Spacer()
 
             Button {
-                showNotificationsInfo = true
+                showNotificationsSheet = true
             } label: {
-                Image(systemName: "bell")
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: "bell")
+                    if dueReminderCount > 0 {
+                        Text("\(min(dueReminderCount, 9))")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(4)
+                            .background(Circle().fill(theme.negative))
+                            .offset(x: 8, y: -7)
+                    }
+                }
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(theme.textPrimary)
                     .frame(width: 34, height: 34)
@@ -590,10 +647,34 @@ struct DashboardScreen: View {
                     .font(.custom("Avenir Next", size: 20).weight(.semibold))
                     .foregroundStyle(theme.textPrimary)
                 Spacer()
-                Text("All accounts")
-                    .font(.custom("Avenir Next", size: 11).weight(.semibold))
-                    .foregroundStyle(theme.textTertiary)
+                Menu {
+                    Picker("Type", selection: $transactionFilterType) {
+                        ForEach(TransactionFilterType.allCases) { item in
+                            Text(item.rawValue).tag(item)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                        Text(transactionFilterType.rawValue)
+                            .font(.custom("Avenir Next", size: 11).weight(.semibold))
+                    }
+                    .foregroundStyle(theme.textSecondary)
+                }
+                .buttonStyle(.plain)
             }
+            .padding(.horizontal, 18)
+
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(theme.textTertiary)
+                TextField("Search by note, category, account", text: $transactionSearchText)
+                    .font(.custom("Avenir Next", size: 13).weight(.semibold))
+                    .foregroundStyle(theme.textPrimary)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 12).fill(theme.surfaceAlt))
             .padding(.horizontal, 18)
 
             if filteredTransactions.isEmpty {
@@ -706,8 +787,8 @@ struct DashboardScreen: View {
                                 return
                             }
 
-                            exportBackupDocument = WalletBackupDocument(data: data)
-                            exportFilename = "WalletBackup-\(safeTimestampString).json"
+                            exportBackupDocument = LedgerFlowBackupDocument(data: data)
+                            exportFilename = "LedgerFlowBackup-\(safeTimestampString).json"
                             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                                 showBackupExporter = true
                             }
@@ -741,6 +822,42 @@ struct DashboardScreen: View {
                         .font(.custom("Avenir Next", size: 12).weight(.semibold))
                         .foregroundStyle(theme.textTertiary)
                         .padding(.top, 6)
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Export Packs")
+                            .font(.custom("Avenir Next", size: 13).weight(.bold))
+                            .foregroundStyle(theme.textSecondary)
+
+                        packExportButton(label: "Current Profile (All Time)") {
+                            do {
+                                let data = try vm.exportBackupJSON(profileName: currentProfileName,
+                                                                   from: nil,
+                                                                   to: nil)
+                                exportBackupDocument = LedgerFlowBackupDocument(data: data)
+                                exportFilename = "LedgerFlowPack-\(currentProfileName)-All-\(safeTimestampString).json"
+                                showBackupExporter = true
+                            } catch {
+                                presentError(error)
+                            }
+                        }
+
+                        packExportButton(label: "Current Profile (Last 90 Days)") {
+                            do {
+                                let end = Date()
+                                let start = Calendar.current.date(byAdding: .day, value: -90, to: end)
+                                let data = try vm.exportBackupJSON(profileName: currentProfileName,
+                                                                   from: start,
+                                                                   to: end)
+                                exportBackupDocument = LedgerFlowBackupDocument(data: data)
+                                exportFilename = "LedgerFlowPack-\(currentProfileName)-90d-\(safeTimestampString).json"
+                                showBackupExporter = true
+                            } catch {
+                                presentError(error)
+                            }
+                        }
+                    }
+                    .padding(12)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(theme.surfaceAlt))
 
                     Spacer()
                 }
@@ -796,6 +913,21 @@ struct DashboardScreen: View {
         } message: {
             Text("Choose how you want to import this backup.")
         }
+    }
+
+    private func packExportButton(label: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack {
+                Text(label)
+                    .font(.custom("Avenir Next", size: 12).weight(.semibold))
+                Spacer()
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundStyle(theme.textPrimary)
+            .padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
     }
 
     private var settingsSheet: some View {
@@ -887,6 +1019,67 @@ struct DashboardScreen: View {
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Close") { showSettingsSheet = false }
+                        .foregroundStyle(theme.textPrimary)
+                }
+            }
+        }
+    }
+
+    private var notificationsSheet: some View {
+        let reminders = SmartDataStore.loadReminders()
+            .filter {
+                $0.isEnabled &&
+                $0.profileName.trimmingCharacters(in: .whitespacesAndNewlines) == currentProfileName
+            }
+            .sorted { $0.chargeDay < $1.chargeDay }
+
+        return NavigationStack {
+            ZStack {
+                theme.backgroundGradient.ignoresSafeArea()
+
+                if reminders.isEmpty {
+                    VStack(spacing: 10) {
+                        Image(systemName: "bell.slash")
+                            .font(.system(size: 34))
+                            .foregroundStyle(theme.textTertiary)
+                        Text("No reminders yet")
+                            .font(.custom("Avenir Next", size: 14).weight(.semibold))
+                            .foregroundStyle(theme.textSecondary)
+                    }
+                } else {
+                    List {
+                        ForEach(reminders) { reminder in
+                            HStack(spacing: 10) {
+                                Circle()
+                                    .fill(theme.surfaceAlt)
+                                    .frame(width: 30, height: 30)
+                                    .overlay(
+                                        Image(systemName: "calendar.badge.clock")
+                                            .font(.system(size: 13, weight: .semibold))
+                                            .foregroundStyle(theme.accent)
+                                    )
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(reminder.title)
+                                        .font(.custom("Avenir Next", size: 14).weight(.semibold))
+                                        .foregroundStyle(theme.textPrimary)
+                                    Text("Day \(reminder.chargeDay) • \(CurrencyFormatter.sgd(amount: reminder.amount))")
+                                        .font(.custom("Avenir Next", size: 11))
+                                        .foregroundStyle(theme.textSecondary)
+                                }
+                                Spacer()
+                            }
+                            .listRowBackground(Color.clear)
+                        }
+                    }
+                    .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
+                }
+            }
+            .navigationTitle("Notifications")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { showNotificationsSheet = false }
                         .foregroundStyle(theme.textPrimary)
                 }
             }
@@ -1042,7 +1235,7 @@ struct DashboardScreen: View {
 
     // MARK: - Helpers
 
-    private func runImport(strategy: WalletImportStrategy) {
+    private func runImport(strategy: LedgerFlowImportStrategy) {
         guard let data = pendingImportData else { return }
         pendingImportData = nil
 
@@ -1145,6 +1338,31 @@ struct DashboardScreen: View {
                         .background(Circle().fill(theme.surfaceAlt))
 
                     Text("Backups")
+                        .font(.custom("Avenir Next", size: 16).weight(.semibold))
+                        .foregroundStyle(theme.textPrimary)
+
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(theme.textTertiary)
+                }
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 14).fill(theme.card))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 18)
+
+            Button {
+                showSmartToolsSheet = true
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "wand.and.stars")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(theme.textPrimary)
+                        .frame(width: 32, height: 32)
+                        .background(Circle().fill(theme.surfaceAlt))
+
+                    Text("Smart Tools")
                         .font(.custom("Avenir Next", size: 16).weight(.semibold))
                         .foregroundStyle(theme.textPrimary)
 

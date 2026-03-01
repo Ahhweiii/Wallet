@@ -1,6 +1,6 @@
 //
-//  WalletBackupService.swift
-//  Wallet
+//  LedgerFlowBackupService.swift
+//  LedgerFlow
 //
 //  Created by Lee Jun Wei on 26/2/26.
 //
@@ -8,12 +8,12 @@
 import Foundation
 import SwiftData
 
-enum WalletImportStrategy {
+enum LedgerFlowImportStrategy {
     case merge
     case replaceAll
 }
 
-enum WalletBackupError: Error, LocalizedError {
+enum LedgerFlowBackupError: Error, LocalizedError {
     case unsupportedVersion(Int)
     case invalidData
 
@@ -27,19 +27,32 @@ enum WalletBackupError: Error, LocalizedError {
     }
 }
 
-enum WalletBackupService {
+enum LedgerFlowBackupService {
 
     // ✅ MainActor because we read SwiftData @Model objects
     @MainActor
     static func exportJSON(accounts: [Account],
                            transactions: [Transaction],
                            fixedPayments: [FixedPayment] = [],
-                           customCategories: [CustomCategory] = []) throws -> Data {
-        let file = WalletBackupFile(
+                           customCategories: [CustomCategory] = [],
+                           autoCategoryRules: [AutoCategoryRuleData]? = nil,
+                           budgets: [BudgetEnvelopeData]? = nil,
+                           savingsGoals: [SavingsGoalData]? = nil,
+                           billReminders: [BillReminderData]? = nil) throws -> Data {
+        let resolvedRules = autoCategoryRules ?? SmartDataStore.loadRules()
+        let resolvedBudgets = budgets ?? SmartDataStore.loadBudgets()
+        let resolvedGoals = savingsGoals ?? SmartDataStore.loadGoals()
+        let resolvedReminders = billReminders ?? SmartDataStore.loadReminders()
+
+        let file = LedgerFlowBackupFile(
             accounts: accounts.map(AccountDTO.init(from:)),
             transactions: transactions.map(TransactionDTO.init(from:)),
             fixedPayments: fixedPayments.map(FixedPaymentDTO.init(from:)),
-            customCategories: customCategories.map(CustomCategoryDTO.init(from:))
+            customCategories: customCategories.map(CustomCategoryDTO.init(from:)),
+            autoCategoryRules: resolvedRules,
+            budgets: resolvedBudgets,
+            savingsGoals: resolvedGoals,
+            billReminders: resolvedReminders
         )
 
         let encoder = JSONEncoder()
@@ -48,21 +61,21 @@ enum WalletBackupService {
         return try encoder.encode(file)
     }
 
-    static func decodeBackup(from data: Data) throws -> WalletBackupFile {
+    static func decodeBackup(from data: Data) throws -> LedgerFlowBackupFile {
         let decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
-        let file = try decoder.decode(WalletBackupFile.self, from: data)
+        let file = try decoder.decode(LedgerFlowBackupFile.self, from: data)
 
-        guard file.version == WalletBackupFile.currentVersion else {
-            throw WalletBackupError.unsupportedVersion(file.version)
+        guard file.version == LedgerFlowBackupFile.currentVersion else {
+            throw LedgerFlowBackupError.unsupportedVersion(file.version)
         }
         return file
     }
 
     @MainActor
-    static func `import`(_ file: WalletBackupFile,
+    static func `import`(_ file: LedgerFlowBackupFile,
                         into modelContext: ModelContext,
-                        strategy: WalletImportStrategy) throws {
+                        strategy: LedgerFlowImportStrategy) throws {
         if case .replaceAll = strategy {
             try deleteAll(modelContext: modelContext)
         }
@@ -191,6 +204,19 @@ enum WalletBackupService {
                     customById[dto.id] = new
                 }
             }
+        }
+
+        if let rules = file.autoCategoryRules {
+            SmartDataStore.saveRules(rules)
+        }
+        if let budgets = file.budgets {
+            SmartDataStore.saveBudgets(budgets)
+        }
+        if let goals = file.savingsGoals {
+            SmartDataStore.saveGoals(goals)
+        }
+        if let reminders = file.billReminders {
+            SmartDataStore.saveReminders(reminders)
         }
 
         try modelContext.save()

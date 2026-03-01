@@ -1,6 +1,6 @@
 //
 //  SubscriptionManager.swift
-//  Wallet
+//  LedgerFlow
 //
 //  Created by Codex on 27/2/26.
 //

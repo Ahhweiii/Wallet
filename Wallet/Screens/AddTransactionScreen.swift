@@ -1,6 +1,6 @@
 //
 //  AddTransactionScreen.swift
-//  Wallet
+//  LedgerFlow
 //
 //  Created by Lee Jun Wei on 23/2/26.
 //
@@ -13,6 +13,7 @@ struct AddTransactionScreen: View {
     let onDone: () -> Void
     @Environment(\.appTheme) private var theme
     @AppStorage("theme_is_dark") private var themeIsDark: Bool = true
+    @AppStorage("tracking_current_profile") private var currentProfileRaw: String = "Personal"
 
     @Environment(\.dismiss) private var dismiss
 
@@ -30,6 +31,12 @@ struct AddTransactionScreen: View {
     @State private var showInsufficientCashAlert: Bool = false
     @State private var isCreditCardPayment: Bool = false
     @State private var selectedTargetAccount: Account? = nil
+    @State private var hasAppliedAutoCategorySuggestion: Bool = false
+    @State private var showDuplicateConfirm: Bool = false
+    @State private var isRecurringIncome: Bool = false
+    @State private var recurringIncomeName: String = ""
+    @State private var recurringIncomeFrequency: FixedPaymentFrequency = .monthly
+    @State private var recurringIncomeChargeDay: Int = max(1, min(31, Calendar.current.component(.day, from: Date())))
 
     init(vm: DashboardViewModel,
          fixedAccountId: UUID? = nil,
@@ -57,6 +64,9 @@ struct AddTransactionScreen: View {
         if selectedType == .transfer {
             return selectedTargetAccount != nil
         }
+        if selectedType == .income, isRecurringIncome {
+            return !recurringIncomeName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
         if isCreditCardPayment {
             return selectedTargetAccount?.type == .credit
         }
@@ -73,6 +83,11 @@ struct AddTransactionScreen: View {
         case .income: return theme.positive
         case .transfer: return theme.accent
         }
+    }
+
+    private var currentProfileName: String {
+        let trimmed = currentProfileRaw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Personal" : trimmed
     }
 
     var body: some View {
@@ -94,6 +109,7 @@ struct AddTransactionScreen: View {
                             categorySection
                             dateSection
                             noteSection
+                            if selectedType == .income { recurringIncomeSection }
 
                             // Space so content isn't hidden behind save bar
                             Color.clear.frame(height: 110)
@@ -130,8 +146,14 @@ struct AddTransactionScreen: View {
             }
             .onChange(of: selectedType) { _, newType in
                 selectedCategory = nil
+                hasAppliedAutoCategorySuggestion = false
                 if newType != .expense {
                     isCreditCardPayment = false
+                }
+                if newType != .income {
+                    isRecurringIncome = false
+                    recurringIncomeName = ""
+                    recurringIncomeFrequency = .monthly
                 }
                 if newType != .transfer {
                     selectedTargetAccount = nil
@@ -145,6 +167,17 @@ struct AddTransactionScreen: View {
                     selectedTargetAccount = nil
                 }
             }
+            .onChange(of: note) { _, newNote in
+                guard selectedType != .transfer else { return }
+                guard hasAppliedAutoCategorySuggestion == false || selectedCategory == nil else { return }
+                guard let suggested = vm.suggestedCategory(type: selectedType,
+                                                           note: newNote,
+                                                           currentProfile: currentProfileName) else { return }
+                selectedCategory = CategoryItem(id: suggested,
+                                                name: suggested,
+                                                icon: TransactionCategory.iconSystemName(for: suggested))
+                hasAppliedAutoCategorySuggestion = true
+            }
             .onAppear {
                 guard let fixedAccountId else { return }
                 selectedAccount = vm.accounts.first(where: { $0.id == fixedAccountId })
@@ -157,6 +190,14 @@ struct AddTransactionScreen: View {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text("The selected cash account does not have enough balance for this payment.")
+            }
+            .alert("Possible Duplicate", isPresented: $showDuplicateConfirm) {
+                Button("Cancel", role: .cancel) { }
+                Button("Save Anyway") {
+                    persistTransaction(skipDuplicateCheck: true)
+                }
+            } message: {
+                Text("A similar transaction exists within the last 2 days. Save anyway?")
             }
         }
     }
@@ -379,7 +420,22 @@ struct AddTransactionScreen: View {
 
     private var noteSection: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Note (optional)")
+            HStack {
+                Text("Note (optional)")
+                Spacer()
+                Button("Smart Parse") {
+                    let parsed = vm.parseTransactionHints(from: note)
+                    if amountText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                       let amount = parsed.amount {
+                        amountText = NSDecimalNumber(decimal: amount).stringValue
+                    }
+                    if let date = parsed.date {
+                        selectedDate = date
+                    }
+                }
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(theme.accent)
+            }
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(theme.textSecondary)
 
@@ -390,58 +446,57 @@ struct AddTransactionScreen: View {
         }
     }
 
+    private var recurringIncomeSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Toggle("Make this recurring income", isOn: $isRecurringIncome)
+                .tint(theme.accent)
+                .foregroundStyle(theme.textPrimary)
+
+            if isRecurringIncome {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Plan Name")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                    TextField("e.g. Salary, Allowance, Rental", text: $recurringIncomeName)
+                        .padding(12)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(theme.card))
+                        .foregroundStyle(theme.textPrimary)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Frequency")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                    Picker("Frequency", selection: $recurringIncomeFrequency) {
+                        Text("Monthly").tag(FixedPaymentFrequency.monthly)
+                        Text("Yearly").tag(FixedPaymentFrequency.yearly)
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Charge Day")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(theme.textSecondary)
+                    Picker("Charge Day", selection: $recurringIncomeChargeDay) {
+                        ForEach(1...31, id: \.self) { day in
+                            Text("\(day)").tag(day)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(theme.card))
+                }
+            }
+        }
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 12).fill(theme.surfaceAlt))
+    }
+
     private var saveBar: some View {
         Button {
-            guard let amt = Decimal(string: amountText) else { return }
-            let acct: Account
-            if let fixedAccountId {
-                guard let fixedAccount = vm.accounts.first(where: { $0.id == fixedAccountId }) else { return }
-                acct = fixedAccount
-            } else {
-                guard let selectedAccount else { return }
-                acct = selectedAccount
-            }
-
-            let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
-            let added: Bool
-
-            if selectedType == .transfer {
-                guard let target = selectedTargetAccount else { return }
-                if acct.type == .cash, acct.amount < amt {
-                    showInsufficientCashAlert = true
-                    return
-                }
-                added = vm.transferBetweenAccounts(fromAccountId: acct.id,
-                                                   toAccountId: target.id,
-                                                   amount: amt,
-                                                   date: selectedDate,
-                                                   note: trimmedNote)
-            } else if isCreditCardPayment {
-                guard let target = selectedTargetAccount else { return }
-                if acct.amount < amt {
-                    showInsufficientCashAlert = true
-                    return
-                }
-                added = vm.payCreditCard(fromCashAccountId: acct.id,
-                                         toCreditAccountId: target.id,
-                                         amount: amt,
-                                         date: selectedDate,
-                                         note: trimmedNote)
-            } else {
-                guard let cat = selectedCategory else { return }
-                added = vm.addTransaction(type: selectedType,
-                                          amount: amt,
-                                          accountId: acct.id,
-                                          categoryName: cat.name,
-                                          date: selectedDate,
-                                          note: trimmedNote)
-            }
-            if added {
-                onDone()
-                dismiss()
-            } else {
-                showLimitAlert = true
-            }
+            persistTransaction(skipDuplicateCheck: false)
         } label: {
             Text("Save Transaction")
                 .font(.system(size: 18, weight: .bold))
@@ -459,6 +514,80 @@ struct AddTransactionScreen: View {
         .padding(.top, 10)
         .padding(.bottom, 10)
         .background(theme.surface)
+    }
+
+    private func persistTransaction(skipDuplicateCheck: Bool) {
+        guard let amt = Decimal(string: amountText) else { return }
+        let acct: Account
+        if let fixedAccountId {
+            guard let fixedAccount = vm.accounts.first(where: { $0.id == fixedAccountId }) else { return }
+            acct = fixedAccount
+        } else {
+            guard let selectedAccount else { return }
+            acct = selectedAccount
+        }
+
+        if !skipDuplicateCheck && selectedType != .transfer {
+            let exists = vm.hasPotentialDuplicate(type: selectedType,
+                                                  amount: amt,
+                                                  accountId: acct.id,
+                                                  date: selectedDate)
+            if exists {
+                showDuplicateConfirm = true
+                return
+            }
+        }
+
+        let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        let added: Bool
+
+        if selectedType == .transfer {
+            guard let target = selectedTargetAccount else { return }
+            if acct.type == .cash, acct.amount < amt {
+                showInsufficientCashAlert = true
+                return
+            }
+            added = vm.transferBetweenAccounts(fromAccountId: acct.id,
+                                               toAccountId: target.id,
+                                               amount: amt,
+                                               date: selectedDate,
+                                               note: trimmedNote)
+        } else if isCreditCardPayment {
+            guard let target = selectedTargetAccount else { return }
+            if acct.amount < amt {
+                showInsufficientCashAlert = true
+                return
+            }
+            added = vm.payCreditCard(fromCashAccountId: acct.id,
+                                     toCreditAccountId: target.id,
+                                     amount: amt,
+                                     date: selectedDate,
+                                     note: trimmedNote)
+        } else {
+            guard let cat = selectedCategory else { return }
+            added = vm.addTransaction(type: selectedType,
+                                      amount: amt,
+                                      accountId: acct.id,
+                                      categoryName: cat.name,
+                                      date: selectedDate,
+                                      note: trimmedNote)
+        }
+        if added {
+            if selectedType == .income && isRecurringIncome {
+                vm.addRecurringIncomePlan(name: recurringIncomeName,
+                                          amount: amt,
+                                          frequency: recurringIncomeFrequency,
+                                          chargeDay: recurringIncomeChargeDay,
+                                          accountId: acct.id,
+                                          startDate: selectedDate,
+                                          note: trimmedNote,
+                                          profileName: currentProfileName)
+            }
+            onDone()
+            dismiss()
+        } else {
+            showLimitAlert = true
+        }
     }
 
     private var amountPrompt: String {

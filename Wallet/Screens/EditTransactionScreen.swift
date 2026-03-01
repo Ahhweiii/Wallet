@@ -1,6 +1,6 @@
 //
 //  EditTransactionScreen.swift
-//  Wallet
+//  LedgerFlow
 //
 //  Created by Codex on 28/2/26.
 //

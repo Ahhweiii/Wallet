@@ -1,6 +1,6 @@
 //
 //  StatisticsScreen.swift
-//  Wallet
+//  LedgerFlow
 //
 //  Created by Codex on 27/2/26.
 //
@@ -42,6 +42,7 @@ struct StatisticsScreen: View {
     private var allAccounts: [Account]
     @State private var selectedAutoMetric: StatisticsAutoMetric = .monthlySpending
     @State private var selectedPeriod: StatisticsPeriod = .sixMonths
+    @State private var debtMonthlyPaymentText: String = "500"
 
     private var currentProfileName: String {
         let trimmed = currentProfileRaw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -86,6 +87,14 @@ struct StatisticsScreen: View {
         fixedPlannedSeries(monthCount: 1).first?.1 ?? .zero
     }
 
+    private var nextMonthForecast: Decimal {
+        forecastNetForNextMonth()
+    }
+
+    private var netWorthSeries: [(Date, Decimal)] {
+        estimatedNetWorthSeries(monthCount: 6)
+    }
+
     var body: some View {
         ZStack {
             theme.backgroundGradient.ignoresSafeArea()
@@ -104,6 +113,8 @@ struct StatisticsScreen: View {
                     .padding(.top, 6)
 
                     totalAmountCard
+                    forecastCard
+                    debtPlannerCard
 
                     chartCard(title: "Auto Generate") {
                         customChartControls
@@ -191,6 +202,26 @@ struct StatisticsScreen: View {
                         }
                     }
 
+                    chartCard(title: "Estimated Net Worth Trend") {
+                        if netWorthSeries.isEmpty {
+                            emptyState
+                        } else {
+                            Chart {
+                                ForEach(netWorthSeries, id: \.0) { row in
+                                    LineMark(
+                                        x: .value("Month", row.0, unit: .month),
+                                        y: .value("Net Worth", (row.1 as NSDecimalNumber).doubleValue)
+                                    )
+                                    .foregroundStyle(theme.accent)
+                                }
+                            }
+                            .chartXAxis {
+                                AxisMarks(values: .automatic(desiredCount: 6))
+                            }
+                            .frame(height: 170)
+                        }
+                    }
+
                     chartCard(title: "Top Categories") {
                         if topCategories.isEmpty {
                             emptyState
@@ -227,6 +258,55 @@ struct StatisticsScreen: View {
             Text("Planned fixed payments for this month")
                 .font(.custom("Avenir Next", size: 11))
                 .foregroundStyle(theme.textTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 14).fill(theme.card))
+        .padding(.horizontal, 18)
+    }
+
+    private var forecastCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Forecast (Next Month)")
+                .font(.custom("Avenir Next", size: 13).weight(.semibold))
+                .foregroundStyle(theme.textSecondary)
+            Text(CurrencyFormatter.sgd(amount: nextMonthForecast))
+                .font(.custom("Avenir Next", size: 24).weight(.bold))
+                .foregroundStyle(nextMonthForecast >= 0 ? theme.positive : theme.negative)
+            Text("Uses trailing 3-month average cashflow + planned fixed payments.")
+                .font(.custom("Avenir Next", size: 11))
+                .foregroundStyle(theme.textTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(14)
+        .background(RoundedRectangle(cornerRadius: 14).fill(theme.card))
+        .padding(.horizontal, 18)
+    }
+
+    private var debtPlannerCard: some View {
+        let payoffData = debtPayoffEstimate()
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("Debt Payoff Planner")
+                .font(.custom("Avenir Next", size: 13).weight(.semibold))
+                .foregroundStyle(theme.textSecondary)
+
+            HStack(spacing: 8) {
+                Text("Monthly payment")
+                    .font(.custom("Avenir Next", size: 12).weight(.semibold))
+                    .foregroundStyle(theme.textSecondary)
+                TextField("0", text: $debtMonthlyPaymentText)
+                    .keyboardType(.decimalPad)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 10).fill(theme.surfaceAlt))
+            }
+
+            Text("Outstanding: \(CurrencyFormatter.sgd(amount: payoffData.totalDebt))")
+                .font(.custom("Avenir Next", size: 12))
+                .foregroundStyle(theme.textPrimary)
+            Text("Estimated months to clear: \(payoffData.months)")
+                .font(.custom("Avenir Next", size: 12).weight(.semibold))
+                .foregroundStyle(theme.textPrimary)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
@@ -439,6 +519,56 @@ struct StatisticsScreen: View {
             let multiplier = Decimal(occurrenceCount)
             return payment.amount * multiplier
         }
+    }
+
+    private func forecastNetForNextMonth() -> Decimal {
+        let monthly = transactionMonthlySeries(monthCount: 3)
+        guard monthly.isEmpty == false else { return .zero }
+        let averageNet = monthly.reduce(Decimal.zero) { partial, row in
+            partial + (row.2 - row.1)
+        } / Decimal(monthly.count)
+
+        let nextFixed = fixedPlannedSeries(monthCount: 2).last?.1 ?? .zero
+        return averageNet - nextFixed
+    }
+
+    private func estimatedNetWorthSeries(monthCount: Int) -> [(Date, Decimal)] {
+        let monthly = transactionMonthlySeries(monthCount: monthCount)
+        var running: Decimal = .zero
+        return monthly.map { row in
+            running += (row.2 - row.1)
+            return (row.0, running)
+        }
+    }
+
+    private func debtPayoffEstimate() -> (totalDebt: Decimal, months: Int) {
+        let creditAccounts = allAccounts.filter {
+            profileAccountIds.contains($0.id) && $0.type == .credit
+        }
+        let totalDebt = creditAccounts.reduce(Decimal.zero) { partial, account in
+            let spent = transactions
+                .filter { $0.accountId == account.id && $0.type == .expense }
+                .reduce(Decimal.zero) { $0 + $1.amount }
+            let repaid = transactions
+                .filter {
+                    $0.accountId == account.id &&
+                    ($0.type == .transfer || $0.type == .income)
+                }
+                .reduce(Decimal.zero) { $0 + $1.amount }
+            return partial + max(Decimal.zero, spent - repaid)
+        }
+
+        let monthlyPayment = Decimal(string: debtMonthlyPaymentText) ?? .zero
+        let months: Int
+        if monthlyPayment <= 0 || totalDebt <= 0 {
+            months = 0
+        } else {
+            let m = NSDecimalNumber(decimal: totalDebt)
+                .dividing(by: NSDecimalNumber(decimal: monthlyPayment))
+                .doubleValue
+            months = Int(ceil(m))
+        }
+        return (totalDebt, months)
     }
 }
 

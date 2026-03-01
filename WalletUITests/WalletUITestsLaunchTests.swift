@@ -1,13 +1,13 @@
 //
-//  WalletUITestsLaunchTests.swift
-//  WalletUITests
+//  LedgerFlowUITestsLaunchTests.swift
+//  LedgerFlowUITests
 //
 //  Created by Lee Jun Wei on 21/2/26.
 //
 
 import XCTest
 
-final class WalletUITestsLaunchTests: XCTestCase {
+final class LedgerFlowUITestsLaunchTests: XCTestCase {
 
     override class var runsForEachTargetApplicationUIConfiguration: Bool {
         true

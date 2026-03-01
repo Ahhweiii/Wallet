@@ -1,6 +1,6 @@
 //
 //  DashboardViewModel.swift
-//  Wallet
+//  LedgerFlow
 //
 //  Created by Lee Jun Wei on 22/2/26.
 //
@@ -331,8 +331,7 @@ final class DashboardViewModel: ObservableObject {
         var existingFixedPaymentTxnKeys = Set(
             transactions
                 .filter {
-                    $0.type == .expense &&
-                    $0.categoryName == "Fixed Payment" &&
+                    ($0.categoryName == "Fixed Payment" || $0.categoryName == "Recurring Income") &&
                     cal.component(.year, from: $0.date) == year &&
                     cal.component(.month, from: $0.date) == month
                 }
@@ -430,6 +429,9 @@ final class DashboardViewModel: ObservableObject {
 
             let baseNote = item.note.trimmingCharacters(in: .whitespacesAndNewlines)
             let autoNote = baseNote.isEmpty ? item.name : "\(item.name) • \(baseNote)"
+            let isRecurringIncome = item.type == .allowance
+            let autoType: TransactionType = isRecurringIncome ? .income : .expense
+            let autoCategory = isRecurringIncome ? "Recurring Income" : "Fixed Payment"
 
             let key = fixedPaymentTxnKey(accountId: accountId, amount: item.amount, date: dueDate, note: autoNote)
             let exists = existingFixedPaymentTxnKeys.contains(key)
@@ -446,10 +448,10 @@ final class DashboardViewModel: ObservableObject {
             }
 
             let txn = Transaction(
-                type: .expense,
+                type: autoType,
                 amount: item.amount,
                 accountId: accountId,
-                categoryName: "Fixed Payment",
+                categoryName: autoCategory,
                 category: .other,
                 date: dueDate,
                 note: autoNote
@@ -458,10 +460,10 @@ final class DashboardViewModel: ObservableObject {
             existingFixedPaymentTxnKeys.insert(key)
 
             if account.type == .cash {
-                account.amount -= item.amount
+                account.amount += isRecurringIncome ? item.amount : -item.amount
             }
 
-            if let outstanding = item.outstandingAmount {
+            if !isRecurringIncome, let outstanding = item.outstandingAmount {
                 item.outstandingAmount = max(Decimal.zero, outstanding - item.amount)
                 if item.outstandingAmount == Decimal.zero,
                    !fixedToDeleteIds.contains(item.id) {
@@ -692,6 +694,114 @@ final class DashboardViewModel: ObservableObject {
         save()
         fetchAll()
         return true
+    }
+
+    func addRecurringIncomePlan(name: String,
+                                amount: Decimal,
+                                frequency: FixedPaymentFrequency,
+                                chargeDay: Int,
+                                accountId: UUID,
+                                startDate: Date,
+                                note: String,
+                                profileName: String) {
+        guard amount > 0 else { return }
+
+        let trimmedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let planName = trimmedName.isEmpty ? "Recurring Income" : trimmedName
+        let normalizedProfile = Self.normalizedProfileName(profileName)
+        let normalizedDay = min(max(chargeDay, 1), 31)
+        let trimmedNote = note.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let plan = FixedPayment(
+            name: planName,
+            amount: amount,
+            type: .allowance,
+            typeName: "",
+            frequency: frequency,
+            startDate: startDate,
+            endDate: nil,
+            cycles: nil,
+            chargeAccountId: accountId,
+            chargeDay: normalizedDay,
+            chargeDate: nil,
+            // Prevent duplicate auto-post for the current cycle when this is created from manual income entry.
+            lastChargedAt: startDate,
+            profileName: normalizedProfile,
+            note: trimmedNote
+        )
+        modelContext.insert(plan)
+        save()
+        fetchAll()
+    }
+
+    func suggestedCategory(type: TransactionType,
+                           note: String,
+                           currentProfile: String) -> String? {
+        let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let normalizedProfile = Self.normalizedProfileName(currentProfile).lowercased()
+        let normalizedNote = trimmed.lowercased()
+        let targetTypeRaw = type.rawValue.lowercased()
+
+        let rules = SmartDataStore.loadRules()
+            .filter {
+                $0.profileName.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalizedProfile &&
+                $0.transactionTypeRaw.lowercased() == targetTypeRaw &&
+                !$0.keyword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            }
+            .sorted { $0.keyword.count > $1.keyword.count }
+
+        for rule in rules {
+            if normalizedNote.contains(rule.keyword.lowercased()) {
+                return rule.categoryName
+            }
+        }
+        return nil
+    }
+
+    func hasPotentialDuplicate(type: TransactionType,
+                               amount: Decimal,
+                               accountId: UUID,
+                               date: Date) -> Bool {
+        let cal = Calendar.current
+        let dayStart = cal.startOfDay(for: date)
+        let windowStart = cal.date(byAdding: .day, value: -2, to: dayStart) ?? dayStart
+        let windowEnd = cal.date(byAdding: .day, value: 2, to: dayStart)?.addingTimeInterval(86_399) ?? dayStart
+
+        return transactions.contains {
+            $0.accountId == accountId &&
+            $0.type == type &&
+            $0.amount == amount &&
+            $0.date >= windowStart &&
+            $0.date <= windowEnd
+        }
+    }
+
+    func parseTransactionHints(from text: String) -> (amount: Decimal?, date: Date?) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return (nil, nil) }
+
+        let amountPattern = #"(?i)(?:s\$|\$)?\s*([0-9]+(?:\.[0-9]{1,2})?)"#
+        let amountRegex = try? NSRegularExpression(pattern: amountPattern)
+        let range = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
+        var amount: Decimal? = nil
+        if let match = amountRegex?.firstMatch(in: trimmed, range: range),
+           match.numberOfRanges > 1,
+           let valueRange = Range(match.range(at: 1), in: trimmed) {
+            amount = Decimal(string: String(trimmed[valueRange]))
+        }
+
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        let formats = ["d/M/yyyy", "d/M/yy", "yyyy-MM-dd", "d MMM yyyy"]
+        var parsedDate: Date? = nil
+        for format in formats where parsedDate == nil {
+            formatter.dateFormat = format
+            parsedDate = formatter.date(from: trimmed)
+        }
+
+        return (amount, parsedDate)
     }
 
     func payCreditCard(fromCashAccountId cashAccountId: UUID,
@@ -958,15 +1068,77 @@ final class DashboardViewModel: ObservableObject {
         let latestTransactions = try modelContext.fetch(FetchDescriptor<Transaction>())
         let latestFixed = try modelContext.fetch(FetchDescriptor<FixedPayment>())
         let latestCustom = try modelContext.fetch(FetchDescriptor<CustomCategory>())
-        return try WalletBackupService.exportJSON(accounts: latestAccounts,
+        return try LedgerFlowBackupService.exportJSON(accounts: latestAccounts,
                                                  transactions: latestTransactions,
                                                  fixedPayments: latestFixed,
                                                  customCategories: latestCustom)
     }
 
-    func importBackupJSON(data: Data, strategy: WalletImportStrategy) throws {
-        let file = try WalletBackupService.decodeBackup(from: data)
-        try WalletBackupService.import(file, into: modelContext, strategy: strategy)
+    func exportBackupJSON(profileName: String?,
+                          from startDate: Date?,
+                          to endDate: Date?) throws -> Data {
+        let normalizedProfile = profileName.map { Self.normalizedProfileName($0) }
+        let allAccounts = try modelContext.fetch(FetchDescriptor<Account>())
+        let filteredAccounts = allAccounts.filter { account in
+            guard let normalizedProfile else { return true }
+            return Self.normalizedProfileName(account.profileName) == normalizedProfile
+        }
+        let accountIds = Set(filteredAccounts.map(\.id))
+
+        let allTransactions = try modelContext.fetch(FetchDescriptor<Transaction>())
+        let filteredTransactions = allTransactions.filter { txn in
+            guard accountIds.contains(txn.accountId) else { return false }
+            if let startDate, txn.date < startDate { return false }
+            if let endDate, txn.date > endDate { return false }
+            return true
+        }
+
+        let allFixed = try modelContext.fetch(FetchDescriptor<FixedPayment>())
+        let filteredFixed = allFixed.filter { fixed in
+            if let normalizedProfile,
+               Self.normalizedProfileName(fixed.profileName) != normalizedProfile {
+                return false
+            }
+            if let startDate, fixed.startDate < startDate { return false }
+            if let endDate {
+                let referenceDate = fixed.endDate ?? fixed.startDate
+                if referenceDate > endDate { return false }
+            }
+            return true
+        }
+
+        let latestCustom = try modelContext.fetch(FetchDescriptor<CustomCategory>())
+        let normalizedProfileLower = normalizedProfile?.lowercased()
+        let rules = SmartDataStore.loadRules().filter { rule in
+            guard let normalizedProfileLower else { return true }
+            return rule.profileName.lowercased() == normalizedProfileLower
+        }
+        let budgets = SmartDataStore.loadBudgets().filter { budget in
+            guard let normalizedProfileLower else { return true }
+            return budget.profileName.lowercased() == normalizedProfileLower
+        }
+        let goals = SmartDataStore.loadGoals().filter { goal in
+            guard let normalizedProfileLower else { return true }
+            return goal.profileName.lowercased() == normalizedProfileLower
+        }
+        let reminders = SmartDataStore.loadReminders().filter { reminder in
+            guard let normalizedProfileLower else { return true }
+            return reminder.profileName.lowercased() == normalizedProfileLower
+        }
+
+        return try LedgerFlowBackupService.exportJSON(accounts: filteredAccounts,
+                                                 transactions: filteredTransactions,
+                                                 fixedPayments: filteredFixed,
+                                                 customCategories: latestCustom,
+                                                 autoCategoryRules: rules,
+                                                 budgets: budgets,
+                                                 savingsGoals: goals,
+                                                 billReminders: reminders)
+    }
+
+    func importBackupJSON(data: Data, strategy: LedgerFlowImportStrategy) throws {
+        let file = try LedgerFlowBackupService.decodeBackup(from: data)
+        try LedgerFlowBackupService.import(file, into: modelContext, strategy: strategy)
         fetchAll()
     }
 
