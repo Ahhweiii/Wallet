@@ -1136,10 +1136,15 @@ final class DashboardViewModel: ObservableObject {
                                                  billReminders: reminders)
     }
 
-    func importBackupJSON(data: Data, strategy: FrugalPilotImportStrategy) throws {
+    func importBackupJSON(data: Data, strategy: FrugalPilotImportStrategy) throws -> FrugalPilotImportResult {
         let file = try FrugalPilotBackupService.decodeBackup(from: data)
-        try FrugalPilotBackupService.import(file, into: modelContext, strategy: strategy)
+        return try importBackupFile(file, strategy: strategy)
+    }
+
+    func importBackupFile(_ file: FrugalPilotBackupFile, strategy: FrugalPilotImportStrategy) throws -> FrugalPilotImportResult {
+        let result = try FrugalPilotBackupService.import(file, into: modelContext, strategy: strategy)
         fetchAll()
+        return result
     }
 
     // MARK: - Save

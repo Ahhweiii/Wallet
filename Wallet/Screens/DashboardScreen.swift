@@ -8,6 +8,7 @@
 import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
+import AuthenticationServices
 
 private struct ScrollOffsetKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
@@ -43,7 +44,6 @@ struct DashboardScreen: View {
     @State private var selectedAccount: Account? = nil
 
     @State private var showSettingsSheet = false
-    @State private var showSubscriptionSheet = false
     @State private var showBackupSheet = false
     @State private var showSmartToolsSheet = false
     @State private var showNotificationsSheet = false
@@ -51,8 +51,17 @@ struct DashboardScreen: View {
     @State private var showBackupImporter = false
     @State private var exportBackupDocument = FrugalPilotBackupDocument()
     @State private var exportFilename = "FrugalPilotBackup.json"
-    @State private var pendingImportData: Data? = nil
+    @State private var pendingImportURL: URL? = nil
     @State private var showImportStrategyDialog = false
+    @State private var isImportingBackup = false
+    @State private var importOutcomeTitle = "Import Backup"
+    @State private var importOutcomeMessage = ""
+    @State private var showImportOutcomeAlert = false
+    @State private var appleSignInMessage = ""
+    @State private var showAppleSignInAlert = false
+    @AppStorage("apple_user_id") private var appleUserId: String = ""
+    @AppStorage("apple_user_name") private var appleUserName: String = ""
+    @AppStorage("cloud_sync_active") private var cloudSyncActive: Bool = false
 
     @State private var errorMessage: String? = nil
     @State private var showErrorAlert = false
@@ -210,7 +219,6 @@ struct DashboardScreen: View {
                 AddTransactionScreen(vm: vm) { }
             }
             .sheet(isPresented: $showSettingsSheet) { settingsSheet }
-            .sheet(isPresented: $showSubscriptionSheet) { subscriptionSheet }
             .sheet(isPresented: $showBackupSheet) { backupSheet }
             .sheet(isPresented: $showSmartToolsSheet) {
                 SmartToolsScreen(currentProfileName: currentProfileName)
@@ -241,6 +249,16 @@ struct DashboardScreen: View {
                 Button("OK", role: .cancel) { }
             } message: {
                 Text("App Lock is available on Pro and Lifetime.")
+            }
+            .alert(importOutcomeTitle, isPresented: $showImportOutcomeAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(importOutcomeMessage)
+            }
+            .alert("Apple ID", isPresented: $showAppleSignInAlert) {
+                Button("OK", role: .cancel) { }
+            } message: {
+                Text(appleSignInMessage)
             }
             .alert("New Profile", isPresented: $showAddProfilePrompt) {
                 TextField("e.g. Side Hustle", text: $newProfileName)
@@ -883,14 +901,7 @@ struct DashboardScreen: View {
             do {
                 let urls = try result.get()
                 guard let url = urls.first else { return }
-
-                let didStart = url.startAccessingSecurityScopedResource()
-                defer {
-                    if didStart { url.stopAccessingSecurityScopedResource() }
-                }
-
-                let data = try Data(contentsOf: url)
-                pendingImportData = data
+                pendingImportURL = url
                 showImportStrategyDialog = true
             } catch {
                 presentError(error)
@@ -905,10 +916,32 @@ struct DashboardScreen: View {
             Button("Replace All (delete existing then import)", role: .destructive) {
                 runImport(strategy: .replaceAll)
             }
-            Button("Cancel", role: .cancel) { pendingImportData = nil }
+            Button("Cancel", role: .cancel) { pendingImportURL = nil }
         } message: {
             Text("Choose how you want to import this backup.")
         }
+        .overlay {
+            if isImportingBackup {
+                ZStack {
+                    Color.black.opacity(0.2).ignoresSafeArea()
+                    VStack(spacing: 10) {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .tint(theme.textPrimary)
+                        Text("Importing backup...")
+                            .font(.custom("Avenir Next", size: 13).weight(.semibold))
+                            .foregroundStyle(theme.textPrimary)
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 12)
+                            .fill(theme.surface)
+                    )
+                }
+            }
+        }
+        .disabled(isImportingBackup)
     }
 
     private func packExportButton(label: String, action: @escaping () -> Void) -> some View {
@@ -931,83 +964,163 @@ struct DashboardScreen: View {
             ZStack {
                 theme.backgroundGradient.ignoresSafeArea()
 
-                VStack(spacing: 14) {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Text("Appearance")
-                                .font(.custom("Avenir Next", size: 16).weight(.semibold))
-                                .foregroundStyle(theme.textPrimary)
-                            Spacer()
-                            Button {
-                                withAnimation(.easeInOut(duration: 0.2)) { themeIsDark.toggle() }
-                            } label: {
-                                Image(systemName: themeIsDark ? "sun.max" : "moon.stars")
+                ScrollView(showsIndicators: false) {
+                    LazyVStack(spacing: 14, pinnedViews: [.sectionHeaders]) {
+                        Section {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Toggle("Dark Mode", isOn: $themeIsDark)
+                                    .tint(theme.accent)
                                     .foregroundStyle(theme.textPrimary)
-                                    .font(.system(size: 16, weight: .semibold))
-                                    .padding(8)
-                                    .background(Circle().fill(theme.surfaceAlt))
+                                Text("Switch between light and dark appearance.")
+                                    .font(.custom("Avenir Next", size: 12))
+                                    .foregroundStyle(theme.textTertiary)
                             }
-                            .buttonStyle(.plain)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14)
+                            .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
+                        } header: {
+                            settingsSectionHeader("Appearance")
                         }
 
-                        Text(themeIsDark ? "Dark mode" : "Light mode")
-                            .font(.custom("Avenir Next", size: 12).weight(.semibold))
-                            .foregroundStyle(theme.textTertiary)
-                    }
-                    .padding(14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(theme.surface)
-                    )
+                        Section {
+                            VStack(alignment: .leading, spacing: 12) {
+                                Toggle("App Lock", isOn: Binding(
+                                    get: { UserDefaults.standard.bool(forKey: "app_lock_enabled") },
+                                    set: { newValue in
+                                        UserDefaults.standard.set(newValue, forKey: "app_lock_enabled")
+                                    }
+                                ))
+                                .tint(theme.accent)
+                                .foregroundStyle(theme.textPrimary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14)
+                            .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
+                        } header: {
+                            settingsSectionHeader("Security")
+                        }
 
-                    VStack(alignment: .leading, spacing: 12) {
-                        Toggle("App Lock", isOn: Binding(
-                            get: { UserDefaults.standard.bool(forKey: "app_lock_enabled") },
-                            set: { newValue in
-                                if !SubscriptionManager.hasAppLock {
-                                    showAppLockInfo = true
-                                    return
+                        Section {
+                            VStack(alignment: .leading, spacing: 12) {
+                                if appleUserId.isEmpty {
+                                    SignInWithAppleButton(.signIn, onRequest: { request in
+                                        request.requestedScopes = [.fullName, .email]
+                                    }, onCompletion: handleAppleSignInResult)
+                                    .signInWithAppleButtonStyle(themeIsDark ? .white : .black)
+                                    .frame(height: 44)
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
+                                } else {
+                                    HStack {
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(appleUserName.isEmpty ? "Signed in with Apple ID" : appleUserName)
+                                                .font(.custom("Avenir Next", size: 13).weight(.semibold))
+                                                .foregroundStyle(theme.textPrimary)
+                                                .lineLimit(1)
+                                            Text(cloudSyncActive ? "iCloud sync is enabled" : "iCloud sync is not active on this build profile")
+                                                .font(.custom("Avenir Next", size: 11))
+                                                .foregroundStyle(theme.textTertiary)
+                                                .lineLimit(2)
+                                        }
+                                        Spacer(minLength: 8)
+                                        Button("Sign Out", role: .destructive) {
+                                            appleUserId = ""
+                                            appleUserName = ""
+                                        }
+                                        .font(.custom("Avenir Next", size: 12).weight(.semibold))
+                                    }
                                 }
-                                UserDefaults.standard.set(newValue, forKey: "app_lock_enabled")
                             }
-                        ))
-                        .tint(theme.accent)
-                        .foregroundStyle(theme.textPrimary)
-                    }
-                    .padding(14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(theme.surface)
-                    )
-
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Transaction Categories")
-                            .font(.custom("Avenir Next", size: 16).weight(.semibold))
-                            .foregroundStyle(theme.textPrimary)
-
-                        Picker("Preset", selection: Binding(
-                            get: { CategoryPreset(rawValue: categoryPresetRaw) ?? .singapore },
-                            set: { categoryPresetRaw = $0.rawValue }
-                        )) {
-                            ForEach(CategoryPreset.allCases) { preset in
-                                Text(preset.rawValue).tag(preset)
-                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14)
+                            .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
+                        } header: {
+                            settingsSectionHeader("Apple ID")
                         }
-                        .pickerStyle(.segmented)
 
-                        Text("Singapore: local-first • Generic: broad standard • Minimal: fewer choices")
-                            .font(.custom("Avenir Next", size: 12))
-                            .foregroundStyle(theme.textTertiary)
+                        Section {
+                            VStack(alignment: .leading, spacing: 12) {
+                                HStack {
+                                    Spacer()
+                                    Text(currentPlan == .free ? "Free" : "Active")
+                                        .font(.custom("Avenir Next", size: 11).weight(.semibold))
+                                        .foregroundStyle(currentPlan == .free ? theme.textTertiary : theme.positive)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 4)
+                                        .background(Capsule().fill(theme.surfaceAlt))
+                                }
+
+                                Text("Pro Lite: SGD 1.99/month • 19.99/year")
+                                    .font(.custom("Avenir Next", size: 12).weight(.semibold))
+                                    .foregroundStyle(theme.textTertiary)
+                                Text("Pro: SGD 2.99/month • 29.99/year • Lifetime 49.99")
+                                    .font(.custom("Avenir Next", size: 12).weight(.semibold))
+                                    .foregroundStyle(theme.textTertiary)
+
+                                VStack(spacing: 8) {
+                                    planRow(title: "Free", subtitle: "Local only", plan: .free)
+                                    planRow(title: "Pro Lite Monthly", subtitle: "Unlimited accounts & transactions", plan: .proLiteMonthly)
+                                    planRow(title: "Pro Lite Yearly", subtitle: "Unlimited accounts & transactions", plan: .proLiteYearly)
+                                    planRow(title: "Pro Monthly", subtitle: "iCloud, App Lock", plan: .proMonthly)
+                                    planRow(title: "Pro Yearly", subtitle: "iCloud, App Lock", plan: .proYearly)
+                                    planRow(title: "Lifetime", subtitle: "All Pro features", plan: .lifetime)
+                                }
+
+                                HStack {
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text("iCloud Sync")
+                                            .font(.custom("Avenir Next", size: 13).weight(.semibold))
+                                            .foregroundStyle(theme.textPrimary)
+                                        Text(cloudSyncActive ? "Enabled" : "Not active")
+                                            .font(.custom("Avenir Next", size: 11))
+                                            .foregroundStyle(theme.textTertiary)
+                                    }
+                                    Spacer()
+                                    Button(currentPlan == .free ? "Upgrade" : "Manage") {
+                                        showProInfo = true
+                                    }
+                                    .buttonStyle(.plain)
+                                    .font(.custom("Avenir Next", size: 12).weight(.semibold))
+                                    .foregroundStyle(currentPlan == .free ? .white : theme.textPrimary)
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .fill(currentPlan == .free ? theme.accent : theme.surfaceAlt)
+                                    )
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14)
+                            .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
+                        } header: {
+                            settingsSectionHeader("Subscription")
+                        }
+
+                        Section {
+                            VStack(alignment: .leading, spacing: 10) {
+                                Picker("Preset", selection: Binding(
+                                    get: { CategoryPreset(rawValue: categoryPresetRaw) ?? .singapore },
+                                    set: { categoryPresetRaw = $0.rawValue }
+                                )) {
+                                    ForEach(CategoryPreset.allCases) { preset in
+                                        Text(preset.rawValue).tag(preset)
+                                    }
+                                }
+                                .pickerStyle(.segmented)
+
+                                Text("Singapore: local-first • Generic: broad standard • Minimal: fewer choices")
+                                    .font(.custom("Avenir Next", size: 12))
+                                    .foregroundStyle(theme.textTertiary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14)
+                            .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
+                        } header: {
+                            settingsSectionHeader("Categories")
+                        }
                     }
-                    .padding(14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(theme.surface)
-                    )
-
-                    Spacer()
+                    .padding(20)
                 }
-                .padding(20)
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
@@ -1106,100 +1219,6 @@ struct DashboardScreen: View {
         }
     }
 
-    private var subscriptionSheet: some View {
-        NavigationStack {
-            ZStack {
-                theme.backgroundGradient.ignoresSafeArea()
-
-                VStack(spacing: 14) {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Text("Subscription")
-                                .font(.custom("Avenir Next", size: 16).weight(.semibold))
-                                .foregroundStyle(theme.textPrimary)
-                            Spacer()
-                            Text(currentPlan == .free ? "Free" : "Active")
-                                .font(.custom("Avenir Next", size: 11).weight(.semibold))
-                                .foregroundStyle(currentPlan == .free ? theme.textTertiary : theme.positive)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 4)
-                                .background(Capsule().fill(theme.surfaceAlt))
-                        }
-
-                        Text("Pro Lite: SGD 1.99/month • 19.99/year")
-                            .font(.custom("Avenir Next", size: 12).weight(.semibold))
-                            .foregroundStyle(theme.textTertiary)
-                        Text("Pro: SGD 2.99/month • 29.99/year • Lifetime 49.99")
-                            .font(.custom("Avenir Next", size: 12).weight(.semibold))
-                            .foregroundStyle(theme.textTertiary)
-
-                        VStack(spacing: 8) {
-                            planRow(title: "Free",
-                                    subtitle: "Local only",
-                                    plan: .free)
-                            planRow(title: "Pro Lite Monthly",
-                                    subtitle: "Unlimited accounts & transactions",
-                                    plan: .proLiteMonthly)
-                            planRow(title: "Pro Lite Yearly",
-                                    subtitle: "Unlimited accounts & transactions",
-                                    plan: .proLiteYearly)
-                            planRow(title: "Pro Monthly",
-                                    subtitle: "iCloud, App Lock",
-                                    plan: .proMonthly)
-                            planRow(title: "Pro Yearly",
-                                    subtitle: "iCloud, App Lock",
-                                    plan: .proYearly)
-                            planRow(title: "Lifetime",
-                                    subtitle: "All Pro features",
-                                    plan: .lifetime)
-                        }
-
-                        HStack {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text("iCloud Sync")
-                                    .font(.custom("Avenir Next", size: 13).weight(.semibold))
-                                    .foregroundStyle(theme.textPrimary)
-                                Text(SubscriptionManager.hasICloudSync ? "Enabled" : "Pro required")
-                                    .font(.custom("Avenir Next", size: 11))
-                                    .foregroundStyle(theme.textTertiary)
-                            }
-                            Spacer()
-                            Button(currentPlan == .free ? "Upgrade" : "Manage") {
-                                showProInfo = true
-                            }
-                            .buttonStyle(.plain)
-                            .font(.custom("Avenir Next", size: 12).weight(.semibold))
-                            .foregroundStyle(currentPlan == .free ? .white : theme.textPrimary)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10)
-                                    .fill(currentPlan == .free ? theme.accent : theme.surfaceAlt)
-                            )
-                        }
-                    }
-                    .padding(14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14)
-                            .fill(theme.surface)
-                    )
-
-                    Spacer()
-                }
-                .padding(20)
-            }
-            .navigationTitle("Subscription")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbarColorScheme(themeIsDark ? .dark : .light, for: .navigationBar)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Close") { showSubscriptionSheet = false }
-                        .foregroundStyle(theme.textPrimary)
-                }
-            }
-        }
-    }
-
     private func planRow(title: String, subtitle: String, plan: SubscriptionPlan) -> some View {
         Button {
             SubscriptionManager.setPlan(plan)
@@ -1229,16 +1248,86 @@ struct DashboardScreen: View {
         .buttonStyle(.plain)
     }
 
+    private func settingsSectionHeader(_ title: String) -> some View {
+        HStack {
+            Text(title)
+                .font(.custom("Avenir Next", size: 12).weight(.bold))
+                .foregroundStyle(theme.textSecondary)
+            Spacer()
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.surface.opacity(0.95))
+        )
+    }
+
     // MARK: - Helpers
 
     private func runImport(strategy: FrugalPilotImportStrategy) {
-        guard let data = pendingImportData else { return }
-        pendingImportData = nil
+        guard let url = pendingImportURL else { return }
+        pendingImportURL = nil
+        isImportingBackup = true
 
-        do {
-            try vm.importBackupJSON(data: data, strategy: strategy)
-        } catch {
-            presentError(error)
+        Task {
+            do {
+                let data = try await Task.detached(priority: .userInitiated) {
+                    let didStart = url.startAccessingSecurityScopedResource()
+                    defer {
+                        if didStart { url.stopAccessingSecurityScopedResource() }
+                    }
+                    return try Data(contentsOf: url)
+                }.value
+
+                let result = try vm.importBackupJSON(data: data, strategy: strategy)
+                importOutcomeTitle = "Import Successful"
+                importOutcomeMessage = importSuccessMessage(for: result)
+                showImportOutcomeAlert = true
+            } catch {
+                importOutcomeTitle = "Import Failed"
+                importOutcomeMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                showImportOutcomeAlert = true
+            }
+            isImportingBackup = false
+        }
+    }
+
+    private func importSuccessMessage(for result: FrugalPilotImportResult) -> String {
+        let total = result.accountCount
+            + result.transactionCount
+            + result.fixedPaymentCount
+            + result.customCategoryCount
+            + result.autoCategoryRuleCount
+            + result.budgetCount
+            + result.savingsGoalCount
+            + result.billReminderCount
+        return "Backup imported successfully (\(total) items)."
+    }
+
+    private func handleAppleSignInResult(_ result: Result<ASAuthorization, Error>) {
+        switch result {
+        case .success(let authorization):
+            guard let credential = authorization.credential as? ASAuthorizationAppleIDCredential else {
+                appleSignInMessage = "Apple ID sign in failed."
+                showAppleSignInAlert = true
+                return
+            }
+            appleUserId = credential.user
+
+            let formatter = PersonNameComponentsFormatter()
+            let name = formatter.string(from: credential.fullName ?? PersonNameComponents())
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !name.isEmpty {
+                appleUserName = name
+            } else if appleUserName.isEmpty {
+                appleUserName = "Apple User"
+            }
+            appleSignInMessage = "Signed in with Apple ID successfully."
+            showAppleSignInAlert = true
+        case .failure(let error):
+            appleSignInMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+            showAppleSignInAlert = true
         }
     }
 
@@ -1284,31 +1373,6 @@ struct DashboardScreen: View {
                         .background(Circle().fill(theme.surfaceAlt))
 
                     Text("Settings")
-                        .font(.custom("Avenir Next", size: 16).weight(.semibold))
-                        .foregroundStyle(theme.textPrimary)
-
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(theme.textTertiary)
-                }
-                .padding(14)
-                .background(RoundedRectangle(cornerRadius: 14).fill(theme.card))
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 18)
-
-            Button {
-                showSubscriptionSheet = true
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "creditcard")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(theme.textPrimary)
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(theme.surfaceAlt))
-
-                    Text("Subscription")
                         .font(.custom("Avenir Next", size: 16).weight(.semibold))
                         .foregroundStyle(theme.textPrimary)
 

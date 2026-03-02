@@ -13,6 +13,18 @@ enum FrugalPilotImportStrategy {
     case replaceAll
 }
 
+struct FrugalPilotImportResult {
+    let strategy: FrugalPilotImportStrategy
+    let accountCount: Int
+    let transactionCount: Int
+    let fixedPaymentCount: Int
+    let customCategoryCount: Int
+    let autoCategoryRuleCount: Int
+    let budgetCount: Int
+    let savingsGoalCount: Int
+    let billReminderCount: Int
+}
+
 enum FrugalPilotBackupError: Error, LocalizedError {
     case unsupportedVersion(Int)
     case invalidData
@@ -75,7 +87,7 @@ enum FrugalPilotBackupService {
     @MainActor
     static func `import`(_ file: FrugalPilotBackupFile,
                         into modelContext: ModelContext,
-                        strategy: FrugalPilotImportStrategy) throws {
+                        strategy: FrugalPilotImportStrategy) throws -> FrugalPilotImportResult {
         if case .replaceAll = strategy {
             try deleteAll(modelContext: modelContext)
         }
@@ -220,6 +232,18 @@ enum FrugalPilotBackupService {
         }
 
         try modelContext.save()
+
+        return FrugalPilotImportResult(
+            strategy: strategy,
+            accountCount: file.accounts.count,
+            transactionCount: file.transactions.count,
+            fixedPaymentCount: file.fixedPayments?.count ?? 0,
+            customCategoryCount: file.customCategories?.count ?? 0,
+            autoCategoryRuleCount: file.autoCategoryRules?.count ?? 0,
+            budgetCount: file.budgets?.count ?? 0,
+            savingsGoalCount: file.savingsGoals?.count ?? 0,
+            billReminderCount: file.billReminders?.count ?? 0
+        )
     }
 
     @MainActor

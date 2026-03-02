@@ -163,14 +163,14 @@ enum TransactionCategory: String, CaseIterable, Identifiable, Hashable, Codable 
 
 @Model
 final class Transaction: Identifiable, Hashable {
-    @Attribute(.unique) var id: UUID
-    var type: TransactionType
-    var amount: Decimal
-    var accountId: UUID
+    var id: UUID = UUID()
+    var type: TransactionType = TransactionType.expense
+    var amount: Decimal = 0
+    var accountId: UUID = UUID()
     var category: TransactionCategory?
-    var categoryName: String
-    var date: Date
-    var note: String
+    var categoryName: String = "Other"
+    var date: Date = Date()
+    var note: String = ""
 
     init(id: UUID = UUID(),
          type: TransactionType,

@@ -16,23 +16,23 @@ enum AccountType: String, CaseIterable, Identifiable, Hashable, Codable {
 
 @Model
 final class Account: Identifiable, Hashable {
-    @Attribute(.unique) var id: UUID
+    var id: UUID = UUID()
 
-    var bankName: String
-    var accountName: String
+    var bankName: String = ""
+    var accountName: String = ""
 
-    var currentCredit: Decimal
-    var amount: Decimal
+    var currentCredit: Decimal = 0
+    var amount: Decimal = 0
 
-    var type: AccountType
-    var colorHex: String
-    var iconSystemName: String
+    var type: AccountType = AccountType.cash
+    var colorHex: String = "#9CA3AF"
+    var iconSystemName: String = "creditcard.fill"
 
-    var isInCombinedCreditPool: Bool
-    var profileName: String
+    var isInCombinedCreditPool: Bool = false
+    var profileName: String = "Personal"
 
     /// The day of month (1–31) when this account's tracking period resets.
-    var billingCycleStartDay: Int
+    var billingCycleStartDay: Int = 1
 
     init(id: UUID = UUID(),
          bankName: String,

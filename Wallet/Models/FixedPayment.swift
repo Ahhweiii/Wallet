@@ -26,22 +26,22 @@ enum FixedPaymentFrequency: String, CaseIterable, Identifiable, Hashable, Codabl
 
 @Model
 final class FixedPayment: Identifiable, Hashable {
-    @Attribute(.unique) var id: UUID
-    var name: String
-    var amount: Decimal
+    var id: UUID = UUID()
+    var name: String = ""
+    var amount: Decimal = 0
     var outstandingAmount: Decimal?
-    var type: FixedPaymentType
-    var typeName: String
-    var frequency: FixedPaymentFrequency
-    var startDate: Date
+    var type: FixedPaymentType = FixedPaymentType.other
+    var typeName: String = ""
+    var frequency: FixedPaymentFrequency = FixedPaymentFrequency.monthly
+    var startDate: Date = Date()
     var endDate: Date?
     var cycles: Int?
     var chargeAccountId: UUID?
     var chargeDay: Int?
     var chargeDate: Date?
     var lastChargedAt: Date?
-    var profileName: String
-    var note: String
+    var profileName: String = "Personal"
+    var note: String = ""
 
     init(id: UUID = UUID(),
          name: String,

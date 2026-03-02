@@ -58,11 +58,11 @@ enum SubscriptionManager {
     }
 
     static var hasICloudSync: Bool {
-        hasProFeatures
+        true
     }
 
     static var hasAppLock: Bool {
-        hasProFeatures
+        true
     }
 
     static var isProLite: Bool {

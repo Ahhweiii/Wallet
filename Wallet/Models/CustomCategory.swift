@@ -17,10 +17,10 @@ enum CustomCategoryKind: String, CaseIterable, Identifiable, Hashable, Codable {
 
 @Model
 final class CustomCategory: Identifiable, Hashable {
-    @Attribute(.unique) var id: UUID
-    var name: String
-    var kind: CustomCategoryKind
-    var iconSystemName: String
+    var id: UUID = UUID()
+    var name: String = ""
+    var kind: CustomCategoryKind = CustomCategoryKind.expense
+    var iconSystemName: String = "tag.fill"
 
     init(id: UUID = UUID(), name: String, kind: CustomCategoryKind, iconSystemName: String = "tag.fill") {
         self.id = id
