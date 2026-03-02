@@ -9,6 +9,7 @@ import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
 import AuthenticationServices
+import StoreKit
 
 private struct ScrollOffsetKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
@@ -25,10 +26,20 @@ private enum TransactionFilterType: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+private enum SettingsTab: String, CaseIterable, Identifiable {
+    case apple = "Apple"
+    case security = "Security"
+    case preferences = "Preferences"
+    var id: String { rawValue }
+}
+
 struct DashboardScreen: View {
     @StateObject private var vm: DashboardViewModel
+    @StateObject private var store = StoreSubscriptionStore()
     @Environment(\.appTheme) private var theme
+    @Environment(\.scenePhase) private var scenePhase
     @AppStorage("theme_is_dark") private var themeIsDark: Bool = true
+    @AppStorage("app_lock_enabled") private var appLockEnabled: Bool = false
     @AppStorage(SubscriptionManager.planKey) private var planRaw: String = SubscriptionPlan.free.rawValue
     @AppStorage("category_preset") private var categoryPresetRaw: String = CategoryPreset.singapore.rawValue
     @AppStorage("tracking_current_profile") private var currentProfileRaw: String = "Personal"
@@ -40,12 +51,15 @@ struct DashboardScreen: View {
     @State private var accountPage: Int = 0
     @State private var showAddAccount: Bool = false
     @State private var showAddTransaction: Bool = false
+    @State private var pendingQuickAddDraft: TransactionQuickAddDraft? = nil
     @State private var showBreakdown: Bool = false
     @State private var selectedAccount: Account? = nil
 
     @State private var showSettingsSheet = false
     @State private var showBackupSheet = false
     @State private var showSmartToolsSheet = false
+    @State private var showAutomationSetupSheet = false
+    @State private var showProfileOverviewSheet = false
     @State private var showNotificationsSheet = false
     @State private var showBackupExporter = false
     @State private var showBackupImporter = false
@@ -65,15 +79,17 @@ struct DashboardScreen: View {
 
     @State private var errorMessage: String? = nil
     @State private var showErrorAlert = false
-    @State private var showProInfo = false
-    @State private var showICloudInfo = false
-    @State private var showAppLockInfo = false
+    @State private var selectedSettingsTab: SettingsTab = .apple
+    @State private var storeStatusMessage: String = ""
+    @State private var showStoreStatusAlert: Bool = false
     @State private var showAddProfilePrompt = false
     @State private var showDeleteProfileDialog = false
     @State private var pendingDeleteProfile: String? = nil
     @State private var newProfileName = ""
     @State private var transactionSearchText: String = ""
     @State private var transactionFilterType: TransactionFilterType = .all
+    @State private var filteredTransactionsCache: [Transaction] = []
+    @State private var dueReminderCount: Int = 0
 
     private let maxPerPage: Int = 4
     private let maxRecentTransactions: Int = 20
@@ -136,39 +152,12 @@ struct DashboardScreen: View {
         AccountsPagerView.pageCount(totalCards: totalCards, maxPerPage: maxPerPage)
     }
 
-    private var filteredTransactions: [Transaction] {
-        let normalizedQuery = transactionSearchText
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .lowercased()
-        let accountNameById = Dictionary(uniqueKeysWithValues: vm.accounts.map { ($0.id, $0.displayName.lowercased()) })
-        return vm.transactions.filter { txn in
-            let byType: Bool = {
-                switch transactionFilterType {
-                case .all: return true
-                case .expense: return txn.type == .expense
-                case .income: return txn.type == .income
-                case .transfer: return txn.type == .transfer
-                }
-            }()
-            guard byType else { return false }
-
-            guard !normalizedQuery.isEmpty else { return true }
-            let accountName = accountNameById[txn.accountId] ?? ""
-            return txn.categoryName.lowercased().contains(normalizedQuery)
-                || txn.note.lowercased().contains(normalizedQuery)
-                || accountName.contains(normalizedQuery)
-        }
+    private var accountById: [UUID: Account] {
+        Dictionary(uniqueKeysWithValues: vm.accounts.map { ($0.id, $0) })
     }
 
-    private var dueReminderCount: Int {
-        let reminders = SmartDataStore.loadReminders()
-        let calendar = Calendar.current
-        let today = calendar.component(.day, from: Date())
-        return reminders.filter { reminder in
-            guard reminder.isEnabled else { return false }
-            guard reminder.profileName.trimmingCharacters(in: .whitespacesAndNewlines) == currentProfileName else { return false }
-            return reminder.chargeDay >= today && reminder.chargeDay <= (today + 3)
-        }.count
+    private var normalizedAccountNameById: [UUID: String] {
+        Dictionary(uniqueKeysWithValues: vm.accounts.map { ($0.id, $0.displayName.lowercased()) })
     }
 
     private var canAddAccount: Bool {
@@ -210,18 +199,26 @@ struct DashboardScreen: View {
                                               profileName: currentProfileName,
                                               colorHex: colorHex)
                     if !added {
-                        errorMessage = "Free tier allows up to \(SubscriptionManager.freeAccountLimit) accounts. Upgrade to Pro for unlimited accounts."
+                        errorMessage = "Free tier allows up to \(SubscriptionManager.accountLimitText) accounts. Upgrade to Pro for unlimited accounts."
                         showErrorAlert = true
                     }
                 }
             }
             .sheet(isPresented: $showAddTransaction) {
-                AddTransactionScreen(vm: vm) { }
+                AddTransactionScreen(vm: vm, initialDraft: pendingQuickAddDraft) {
+                    pendingQuickAddDraft = nil
+                }
             }
             .sheet(isPresented: $showSettingsSheet) { settingsSheet }
             .sheet(isPresented: $showBackupSheet) { backupSheet }
             .sheet(isPresented: $showSmartToolsSheet) {
                 SmartToolsScreen(currentProfileName: currentProfileName)
+            }
+            .sheet(isPresented: $showAutomationSetupSheet) {
+                AutomationSetupScreen()
+            }
+            .sheet(isPresented: $showProfileOverviewSheet) {
+                ProfileOverviewScreen()
             }
             .sheet(isPresented: $showNotificationsSheet) {
                 notificationsSheet
@@ -235,20 +232,10 @@ struct DashboardScreen: View {
             } message: {
                 Text(errorMessage ?? "Unknown error")
             }
-            .alert("Pro", isPresented: $showProInfo) {
+            .alert("Subscription", isPresented: $showStoreStatusAlert) {
                 Button("OK", role: .cancel) { }
             } message: {
-                Text("Subscription management will be available in a future update.")
-            }
-            .alert("iCloud Sync", isPresented: $showICloudInfo) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text("iCloud sync is enabled for Pro users. You may need to restart the app for changes to take effect.")
-            }
-            .alert("App Lock", isPresented: $showAppLockInfo) {
-                Button("OK", role: .cancel) { }
-            } message: {
-                Text("App Lock is available on Pro and Lifetime.")
+                Text(storeStatusMessage)
             }
             .alert(importOutcomeTitle, isPresented: $showImportOutcomeAlert) {
                 Button("OK", role: .cancel) { }
@@ -288,6 +275,9 @@ struct DashboardScreen: View {
     private func applyLifecycle<V: View>(_ view: V) -> some View {
         view
             .onAppear {
+                if !appleUserId.isEmpty {
+                    AccountSettingsStore.restoreSettings(for: appleUserId)
+                }
                 if trackingProfilesRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     trackingProfilesRaw = "Personal"
                 }
@@ -297,15 +287,56 @@ struct DashboardScreen: View {
                 if !trackingProfiles.contains(where: { $0.caseInsensitiveCompare(currentProfileName) == .orderedSame }) {
                     currentProfileRaw = trackingProfiles.first ?? "Personal"
                 }
+                planRaw = SubscriptionManager.currentPlan.rawValue
                 vm.setActiveProfile(currentProfileName)
                 vm.fetchAll()
+                refreshDerivedDashboardData()
+                consumePendingQuickAddDraftIfNeeded()
             }
             .onChange(of: currentProfileRaw) { _, newValue in
                 vm.setActiveProfile(newValue)
                 vm.fetchAll()
+                if !appleUserId.isEmpty {
+                    AccountSettingsStore.saveCurrentSettings(for: appleUserId)
+                }
+                refreshDueReminderCount()
+            }
+            .onChange(of: trackingProfilesRaw) { _, _ in
+                if !appleUserId.isEmpty {
+                    AccountSettingsStore.saveCurrentSettings(for: appleUserId)
+                }
+            }
+            .onChange(of: categoryPresetRaw) { _, _ in
+                if !appleUserId.isEmpty {
+                    AccountSettingsStore.saveCurrentSettings(for: appleUserId)
+                }
             }
             .onChange(of: vm.accounts.count) { _, _ in
                 accountPage = min(accountPage, max(0, pagesCount - 1))
+                refreshFilteredTransactions()
+            }
+            .onChange(of: vm.transactions.count) { _, _ in
+                refreshFilteredTransactions()
+            }
+            .onChange(of: transactionSearchText) { _, _ in
+                refreshFilteredTransactions()
+            }
+            .onChange(of: transactionFilterType) { _, _ in
+                refreshFilteredTransactions()
+            }
+            .onChange(of: store.statusMessage) { _, message in
+                guard let message, !message.isEmpty else { return }
+                storeStatusMessage = message
+                showStoreStatusAlert = true
+            }
+            .onChange(of: showAddTransaction) { _, isPresented in
+                if !isPresented {
+                    pendingQuickAddDraft = nil
+                }
+            }
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .active else { return }
+                consumePendingQuickAddDraftIfNeeded()
             }
     }
 
@@ -396,7 +427,7 @@ struct DashboardScreen: View {
                         if canAddAccount {
                             showAddAccount = true
                         } else {
-                            errorMessage = "Free tier allows up to \(SubscriptionManager.freeAccountLimit) accounts. Upgrade to Pro for unlimited accounts."
+                            errorMessage = "Free tier allows up to \(SubscriptionManager.accountLimitText) accounts. Upgrade to Pro for unlimited accounts."
                             showErrorAlert = true
                         }
                     },
@@ -691,7 +722,7 @@ struct DashboardScreen: View {
             .background(RoundedRectangle(cornerRadius: 12).fill(theme.surfaceAlt))
             .padding(.horizontal, 18)
 
-            if filteredTransactions.isEmpty {
+            if filteredTransactionsCache.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "tray")
                         .font(.system(size: 36))
@@ -705,7 +736,7 @@ struct DashboardScreen: View {
 
             } else {
                 LazyVStack(spacing: 10) {
-                    ForEach(filteredTransactions.prefix(maxRecentTransactions)) { txn in
+                    ForEach(filteredTransactionsCache.prefix(maxRecentTransactions)) { txn in
                         transactionRow(txn)
                     }
                 }
@@ -721,7 +752,7 @@ struct DashboardScreen: View {
         let isTransferOut = isTransfer && txn.categoryName == "Transfer Out"
         let isExpense = txn.type == .expense || isTransferOut
         let amountColor: Color = isTransfer ? (isTransferOut ? theme.negative : theme.positive) : (isExpense ? theme.negative : theme.positive)
-        let acct = vm.accounts.first(where: { $0.id == txn.accountId })
+        let acct = accountById[txn.accountId]
         let categoryName = txn.categoryName.isEmpty ? (txn.category?.rawValue ?? "Other") : txn.categoryName
         let iconName = isTransfer ? "arrow.left.arrow.right.circle.fill" : TransactionCategory.iconSystemName(for: categoryName)
         let transferCounterparty = isTransfer ? txn.note : ""
@@ -965,42 +996,18 @@ struct DashboardScreen: View {
                 theme.backgroundGradient.ignoresSafeArea()
 
                 ScrollView(showsIndicators: false) {
-                    LazyVStack(spacing: 14, pinnedViews: [.sectionHeaders]) {
-                        Section {
-                            VStack(alignment: .leading, spacing: 12) {
-                                Toggle("Dark Mode", isOn: $themeIsDark)
-                                    .tint(theme.accent)
-                                    .foregroundStyle(theme.textPrimary)
-                                Text("Switch between light and dark appearance.")
-                                    .font(.custom("Avenir Next", size: 12))
-                                    .foregroundStyle(theme.textTertiary)
+                    VStack(spacing: 14) {
+                        Picker("Settings Tabs", selection: $selectedSettingsTab) {
+                            ForEach(SettingsTab.allCases) { tab in
+                                Text(tab.rawValue).tag(tab)
                             }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(14)
-                            .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
-                        } header: {
-                            settingsSectionHeader("Appearance")
                         }
+                        .pickerStyle(.segmented)
+                        .padding(14)
+                        .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
 
-                        Section {
-                            VStack(alignment: .leading, spacing: 12) {
-                                Toggle("App Lock", isOn: Binding(
-                                    get: { UserDefaults.standard.bool(forKey: "app_lock_enabled") },
-                                    set: { newValue in
-                                        UserDefaults.standard.set(newValue, forKey: "app_lock_enabled")
-                                    }
-                                ))
-                                .tint(theme.accent)
-                                .foregroundStyle(theme.textPrimary)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(14)
-                            .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
-                        } header: {
-                            settingsSectionHeader("Security")
-                        }
-
-                        Section {
+                        if selectedSettingsTab == .apple {
+                            settingsSectionHeader("Apple Account")
                             VStack(alignment: .leading, spacing: 12) {
                                 if appleUserId.isEmpty {
                                     SignInWithAppleButton(.signIn, onRequest: { request in
@@ -1016,13 +1023,16 @@ struct DashboardScreen: View {
                                                 .font(.custom("Avenir Next", size: 13).weight(.semibold))
                                                 .foregroundStyle(theme.textPrimary)
                                                 .lineLimit(1)
-                                            Text(cloudSyncActive ? "iCloud sync is enabled" : "iCloud sync is not active on this build profile")
+                                            Text(cloudSyncActive ? "iCloud sync is enabled on this build." : "iCloud sync is not active on this build profile.")
                                                 .font(.custom("Avenir Next", size: 11))
                                                 .foregroundStyle(theme.textTertiary)
                                                 .lineLimit(2)
                                         }
                                         Spacer(minLength: 8)
                                         Button("Sign Out", role: .destructive) {
+                                            if !appleUserId.isEmpty {
+                                                AccountSettingsStore.saveCurrentSettings(for: appleUserId)
+                                            }
                                             appleUserId = ""
                                             appleUserName = ""
                                         }
@@ -1033,70 +1043,112 @@ struct DashboardScreen: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(14)
                             .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
-                        } header: {
-                            settingsSectionHeader("Apple ID")
-                        }
 
-                        Section {
+                            settingsSectionHeader("Subscription")
                             VStack(alignment: .leading, spacing: 12) {
-                                HStack {
-                                    Spacer()
-                                    Text(currentPlan == .free ? "Free" : "Active")
-                                        .font(.custom("Avenir Next", size: 11).weight(.semibold))
-                                        .foregroundStyle(currentPlan == .free ? theme.textTertiary : theme.positive)
-                                        .padding(.horizontal, 10)
-                                        .padding(.vertical, 4)
-                                        .background(Capsule().fill(theme.surfaceAlt))
+                                if SubscriptionManager.allFeaturesFree {
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "checkmark.seal.fill")
+                                            .foregroundStyle(theme.positive)
+                                        Text("All features are currently unlocked on Free.")
+                                            .font(.custom("Avenir Next", size: 12).weight(.semibold))
+                                            .foregroundStyle(theme.textPrimary)
+                                    }
+                                    .padding(10)
+                                    .background(RoundedRectangle(cornerRadius: 10).fill(theme.surfaceAlt))
+                                } else {
+                                    HStack {
+                                        Text("Current Plan")
+                                            .font(.custom("Avenir Next", size: 13).weight(.semibold))
+                                            .foregroundStyle(theme.textSecondary)
+                                        Spacer()
+                                        Text(currentPlan == .free ? "Free" : "Active")
+                                            .font(.custom("Avenir Next", size: 11).weight(.semibold))
+                                            .foregroundStyle(currentPlan == .free ? theme.textTertiary : theme.positive)
+                                            .padding(.horizontal, 10)
+                                            .padding(.vertical, 4)
+                                            .background(Capsule().fill(theme.surfaceAlt))
+                                    }
                                 }
-
-                                Text("Pro Lite: SGD 1.99/month • 19.99/year")
-                                    .font(.custom("Avenir Next", size: 12).weight(.semibold))
-                                    .foregroundStyle(theme.textTertiary)
-                                Text("Pro: SGD 2.99/month • 29.99/year • Lifetime 49.99")
-                                    .font(.custom("Avenir Next", size: 12).weight(.semibold))
-                                    .foregroundStyle(theme.textTertiary)
 
                                 VStack(spacing: 8) {
-                                    planRow(title: "Free", subtitle: "Local only", plan: .free)
-                                    planRow(title: "Pro Lite Monthly", subtitle: "Unlimited accounts & transactions", plan: .proLiteMonthly)
-                                    planRow(title: "Pro Lite Yearly", subtitle: "Unlimited accounts & transactions", plan: .proLiteYearly)
-                                    planRow(title: "Pro Monthly", subtitle: "iCloud, App Lock", plan: .proMonthly)
-                                    planRow(title: "Pro Yearly", subtitle: "iCloud, App Lock", plan: .proYearly)
-                                    planRow(title: "Lifetime", subtitle: "All Pro features", plan: .lifetime)
+                                    ForEach(SubscriptionManager.planCatalog) { descriptor in
+                                        subscriptionProductRow(descriptor: descriptor)
+                                    }
                                 }
 
                                 HStack {
-                                    VStack(alignment: .leading, spacing: 4) {
-                                        Text("iCloud Sync")
-                                            .font(.custom("Avenir Next", size: 13).weight(.semibold))
-                                            .foregroundStyle(theme.textPrimary)
-                                        Text(cloudSyncActive ? "Enabled" : "Not active")
-                                            .font(.custom("Avenir Next", size: 11))
-                                            .foregroundStyle(theme.textTertiary)
-                                    }
-                                    Spacer()
-                                    Button(currentPlan == .free ? "Upgrade" : "Manage") {
-                                        showProInfo = true
+                                    Button("Reload Plans") {
+                                        Task {
+                                            await store.loadProducts()
+                                        }
                                     }
                                     .buttonStyle(.plain)
                                     .font(.custom("Avenir Next", size: 12).weight(.semibold))
-                                    .foregroundStyle(currentPlan == .free ? .white : theme.textPrimary)
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 10)
-                                            .fill(currentPlan == .free ? theme.accent : theme.surfaceAlt)
-                                    )
+                                    .foregroundStyle(theme.accent)
+
+                                    Spacer()
+
+                                    Button("Restore Purchases") {
+                                        Task {
+                                            await store.restorePurchases()
+                                            planRaw = SubscriptionManager.currentPlan.rawValue
+                                        }
+                                    }
+                                    .buttonStyle(.plain)
+                                    .font(.custom("Avenir Next", size: 12).weight(.semibold))
+                                    .foregroundStyle(theme.accent)
+
+                                    if store.isLoading {
+                                        ProgressView()
+                                            .scaleEffect(0.8)
+                                    }
+                                }
+                                .opacity(SubscriptionManager.allFeaturesFree ? 0.65 : 1)
+
+                                Text(SubscriptionManager.allFeaturesFree
+                                     ? "Store plans are still listed, but every feature is unlocked on Free for now."
+                                     : "Purchases are processed by Apple App Store for billing and sales reporting.")
+                                    .font(.custom("Avenir Next", size: 11))
+                                    .foregroundStyle(theme.textTertiary)
+
+                                if store.missingProductIDs.isEmpty == false {
+                                    Text("Unavailable product IDs: \(store.missingProductIDs.joined(separator: ", "))")
+                                        .font(.custom("Menlo", size: 10))
+                                        .foregroundStyle(theme.textTertiary)
                                 }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(14)
                             .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
-                        } header: {
-                            settingsSectionHeader("Subscription")
-                        }
+                        } else if selectedSettingsTab == .security {
+                            settingsSectionHeader("Face ID")
+                            VStack(alignment: .leading, spacing: 12) {
+                                Toggle("Face ID Unlock", isOn: $appLockEnabled)
+                                    .tint(theme.accent)
+                                    .foregroundStyle(theme.textPrimary)
+                                Text("Require Face ID (or device passcode fallback) before accessing your wallet.")
+                                    .font(.custom("Avenir Next", size: 12))
+                                    .foregroundStyle(theme.textTertiary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14)
+                            .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
+                        } else {
+                            settingsSectionHeader("Appearance")
+                            VStack(alignment: .leading, spacing: 12) {
+                                Toggle("Dark Mode", isOn: $themeIsDark)
+                                    .tint(theme.accent)
+                                    .foregroundStyle(theme.textPrimary)
+                                Text("Switch between light and dark appearance.")
+                                    .font(.custom("Avenir Next", size: 12))
+                                    .foregroundStyle(theme.textTertiary)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14)
+                            .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
 
-                        Section {
+                            settingsSectionHeader("Categories")
                             VStack(alignment: .leading, spacing: 10) {
                                 Picker("Preset", selection: Binding(
                                     get: { CategoryPreset(rawValue: categoryPresetRaw) ?? .singapore },
@@ -1115,8 +1167,6 @@ struct DashboardScreen: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(14)
                             .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
-                        } header: {
-                            settingsSectionHeader("Categories")
                         }
                     }
                     .padding(20)
@@ -1130,6 +1180,10 @@ struct DashboardScreen: View {
                     Button("Close") { showSettingsSheet = false }
                         .foregroundStyle(theme.textPrimary)
                 }
+            }
+            .task {
+                await store.prepareIfNeeded()
+                planRaw = SubscriptionManager.currentPlan.rawValue
             }
         }
     }
@@ -1219,25 +1273,36 @@ struct DashboardScreen: View {
         }
     }
 
-    private func planRow(title: String, subtitle: String, plan: SubscriptionPlan) -> some View {
+    private func subscriptionProductRow(descriptor: SubscriptionPlanDescriptor) -> some View {
         Button {
-            SubscriptionManager.setPlan(plan)
-            planRaw = plan.rawValue
-            if SubscriptionManager.hasICloudSync {
-                showICloudInfo = true
+            Task {
+                await store.purchase(plan: descriptor.plan)
+                planRaw = SubscriptionManager.currentPlan.rawValue
             }
         } label: {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
+                    Text(descriptor.title)
                         .font(.custom("Avenir Next", size: 12).weight(.semibold))
                         .foregroundStyle(theme.textPrimary)
-                    Text(subtitle)
+                    Text(descriptor.subtitle)
                         .font(.custom("Avenir Next", size: 11))
                         .foregroundStyle(theme.textTertiary)
                 }
                 Spacer()
-                if currentPlan == plan {
+                if let product = store.product(for: descriptor.plan) {
+                    Text(product.displayPrice)
+                        .font(.custom("Avenir Next", size: 12).weight(.bold))
+                        .foregroundStyle(theme.textPrimary)
+                } else if store.isLoading {
+                    ProgressView()
+                        .scaleEffect(0.75)
+                } else {
+                    Text("Not available")
+                        .font(.custom("Avenir Next", size: 11).weight(.semibold))
+                        .foregroundStyle(theme.textTertiary)
+                }
+                if currentPlan == descriptor.plan {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(theme.positive)
                 }
@@ -1246,6 +1311,7 @@ struct DashboardScreen: View {
             .background(RoundedRectangle(cornerRadius: 10).fill(theme.surfaceAlt))
         }
         .buttonStyle(.plain)
+        .disabled(SubscriptionManager.allFeaturesFree || store.isPurchasing || store.product(for: descriptor.plan) == nil)
     }
 
     private func settingsSectionHeader(_ title: String) -> some View {
@@ -1305,6 +1371,47 @@ struct DashboardScreen: View {
         return "Backup imported successfully (\(total) items)."
     }
 
+    private func refreshDerivedDashboardData() {
+        refreshFilteredTransactions()
+        refreshDueReminderCount()
+    }
+
+    private func refreshFilteredTransactions() {
+        let normalizedQuery = transactionSearchText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let accountNameById = normalizedAccountNameById
+
+        filteredTransactionsCache = vm.transactions.filter { txn in
+            let byType: Bool = {
+                switch transactionFilterType {
+                case .all: return true
+                case .expense: return txn.type == .expense
+                case .income: return txn.type == .income
+                case .transfer: return txn.type == .transfer
+                }
+            }()
+            guard byType else { return false }
+
+            guard !normalizedQuery.isEmpty else { return true }
+            let accountName = accountNameById[txn.accountId] ?? ""
+            return txn.categoryName.lowercased().contains(normalizedQuery)
+                || txn.note.lowercased().contains(normalizedQuery)
+                || accountName.contains(normalizedQuery)
+        }
+    }
+
+    private func refreshDueReminderCount() {
+        let reminders = SmartDataStore.loadReminders()
+        let calendar = Calendar.current
+        let today = calendar.component(.day, from: Date())
+        dueReminderCount = reminders.filter { reminder in
+            guard reminder.isEnabled else { return false }
+            guard reminder.profileName.trimmingCharacters(in: .whitespacesAndNewlines) == currentProfileName else { return false }
+            return reminder.chargeDay >= today && reminder.chargeDay <= (today + 3)
+        }.count
+    }
+
     private func handleAppleSignInResult(_ result: Result<ASAuthorization, Error>) {
         switch result {
         case .success(let authorization):
@@ -1334,6 +1441,14 @@ struct DashboardScreen: View {
     private func presentError(_ error: Error) {
         errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         showErrorAlert = true
+    }
+
+    private func consumePendingQuickAddDraftIfNeeded() {
+        guard !showAddTransaction else { return }
+        guard let draft = TransactionQuickAddDraftStore.consumePending() else { return }
+        pendingQuickAddDraft = draft
+        selectedTab = 0
+        showAddTransaction = true
     }
 
     private var placeholderTab: some View {
@@ -1423,6 +1538,56 @@ struct DashboardScreen: View {
                         .background(Circle().fill(theme.surfaceAlt))
 
                     Text("Smart Tools")
+                        .font(.custom("Avenir Next", size: 16).weight(.semibold))
+                        .foregroundStyle(theme.textPrimary)
+
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(theme.textTertiary)
+                }
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 14).fill(theme.card))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 18)
+
+            Button {
+                showAutomationSetupSheet = true
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "bolt.horizontal.circle")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(theme.textPrimary)
+                        .frame(width: 32, height: 32)
+                        .background(Circle().fill(theme.surfaceAlt))
+
+                    Text("Automation Setup")
+                        .font(.custom("Avenir Next", size: 16).weight(.semibold))
+                        .foregroundStyle(theme.textPrimary)
+
+                    Spacer()
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(theme.textTertiary)
+                }
+                .padding(14)
+                .background(RoundedRectangle(cornerRadius: 14).fill(theme.card))
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, 18)
+
+            Button {
+                showProfileOverviewSheet = true
+            } label: {
+                HStack(spacing: 12) {
+                    Image(systemName: "person.crop.circle")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundStyle(theme.textPrimary)
+                        .frame(width: 32, height: 32)
+                        .background(Circle().fill(theme.surfaceAlt))
+
+                    Text("Profile & Usage")
                         .font(.custom("Avenir Next", size: 16).weight(.semibold))
                         .foregroundStyle(theme.textPrimary)
 

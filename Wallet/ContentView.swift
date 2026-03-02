@@ -67,12 +67,31 @@ struct ContentView: View {
         }
         .onAppear {
             refreshBiometryType()
+            if !appleUserId.isEmpty {
+                AccountSettingsStore.restoreSettings(for: appleUserId)
+            }
             if appLockEnabled {
                 isUnlocked = false
                 authenticate()
             }
         }
+        .onChange(of: appleUserId) { oldValue, newValue in
+            if !oldValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                AccountSettingsStore.saveCurrentSettings(for: oldValue)
+            }
+            if !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                AccountSettingsStore.restoreSettings(for: newValue)
+            }
+        }
+        .onChange(of: themeIsDark) { _, _ in
+            if !appleUserId.isEmpty {
+                AccountSettingsStore.saveCurrentSettings(for: appleUserId)
+            }
+        }
         .onChange(of: appLockEnabled) { _, enabled in
+            if !appleUserId.isEmpty {
+                AccountSettingsStore.saveCurrentSettings(for: appleUserId)
+            }
             if enabled {
                 isUnlocked = false
                 authenticate()
@@ -97,6 +116,9 @@ struct ContentView: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(appleSignInErrorMessage)
+        }
+        .onOpenURL { url in
+            handleIncomingURL(url)
         }
     }
 
@@ -204,6 +226,34 @@ struct ContentView: View {
             appleSignInErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             showAppleSignInError = true
         }
+    }
+
+    private func handleIncomingURL(_ url: URL) {
+        guard let components = URLComponents(url: url, resolvingAgainstBaseURL: false) else { return }
+        guard components.host == "add-transaction" || components.path == "/add-transaction" else { return }
+
+        let queryItems = Dictionary(uniqueKeysWithValues: (components.queryItems ?? []).map { ($0.name.lowercased(), $0.value ?? "") })
+        let rawType = queryItems["type"]?.trimmingCharacters(in: .whitespacesAndNewlines).capitalized ?? "Expense"
+        let amount = queryItems["amount"].flatMap { Decimal(string: $0.replacingOccurrences(of: ",", with: "")) }
+        let note = queryItems["note"]?.removingPercentEncoding ?? queryItems["note"] ?? ""
+        let category = queryItems["category"]?.removingPercentEncoding ?? queryItems["category"]
+
+        let parsedDate: Date? = {
+            guard let raw = queryItems["date"], !raw.isEmpty else { return nil }
+            let iso = ISO8601DateFormatter()
+            if let d = iso.date(from: raw) { return d }
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyy-MM-dd"
+            return formatter.date(from: raw)
+        }()
+
+        let draft = TransactionQuickAddDraft(typeRaw: rawType,
+                                             amount: amount,
+                                             note: note,
+                                             date: parsedDate,
+                                             categoryName: category)
+        TransactionQuickAddDraftStore.savePending(draft)
     }
 }
 
