@@ -13,7 +13,6 @@ struct FrugalPilotApp: App {
     @State private var container: ModelContainer?
     private static let cloudSyncActiveKey = "cloud_sync_active"
     private static let cloudSyncLastErrorKey = "cloud_sync_last_error"
-    private static let containerInitLogKey = "container_init_log"
 
     var body: some Scene {
         WindowGroup {
@@ -26,6 +25,7 @@ struct FrugalPilotApp: App {
                 }
             }
             .task {
+                SubscriptionManager.startTransactionUpdatesListener()
                 guard container == nil else { return }
                 let preferCloudSync = SubscriptionManager.hasICloudSync
                 container = FrugalPilotApp.makeContainerWithRecovery(preferCloudSync: preferCloudSync)
@@ -52,7 +52,6 @@ struct FrugalPilotApp: App {
     }
 
     private static func makeContainerWithRecovery(preferCloudSync: Bool) -> ModelContainer {
-        clearContainerInitLog()
         UserDefaults.standard.removeObject(forKey: cloudSyncLastErrorKey)
 
         if preferCloudSync {
@@ -60,74 +59,48 @@ struct FrugalPilotApp: App {
                 let cloud = try makeContainer(useCloudKit: true)
                 UserDefaults.standard.set(true, forKey: cloudSyncActiveKey)
                 UserDefaults.standard.removeObject(forKey: cloudSyncLastErrorKey)
-                appendContainerLog("SUCCESS cloud container")
                 return cloud
             } catch {
                 UserDefaults.standard.set(String(describing: error), forKey: cloudSyncLastErrorKey)
-                appendContainerLog("FAIL cloud container: \(String(describing: error))")
             }
-        } else {
-            appendContainerLog("SKIP cloud container (preferCloudSync=false)")
         }
 
         UserDefaults.standard.set(false, forKey: cloudSyncActiveKey)
         do {
             let local = try makeContainer(useCloudKit: false)
-            appendContainerLog("SUCCESS local container")
             return local
-        } catch {
-            appendContainerLog("FAIL local container: \(String(describing: error))")
-        }
+        } catch { }
 
         // Attempt a safe reset by deleting the local store and recreating.
         let didReset = resetLocalStore()
         UserDefaults.standard.set(didReset, forKey: "did_reset_store")
-        appendContainerLog("RESET local store: \(didReset ? "done" : "failed")")
         do {
             let localAfterReset = try makeContainer(useCloudKit: false)
-            appendContainerLog("SUCCESS local container after reset")
             return localAfterReset
-        } catch {
-            appendContainerLog("FAIL local container after reset: \(String(describing: error))")
-        }
+        } catch { }
 
         // Try SwiftData's default storage location as another recovery path.
         do {
             let defaultLocal = try makeDefaultContainer()
-            appendContainerLog("SUCCESS default local container")
             return defaultLocal
-        } catch {
-            appendContainerLog("FAIL default local container: \(String(describing: error))")
-        }
+        } catch { }
 
         // Final fallback: keep app launchable even if persistent store is corrupted.
         do {
             let memory = try makeInMemoryContainer()
-            appendContainerLog("SUCCESS in-memory container")
             return memory
-        } catch {
-            appendContainerLog("FAIL in-memory container: \(String(describing: error))")
-        }
+        } catch { }
 
         // Last resort: force reset once more then retry in-memory/default order.
-        let didResetAgain = resetLocalStore()
-        appendContainerLog("RESET local store again: \(didResetAgain ? "done" : "failed")")
+        _ = resetLocalStore()
         do {
             let memoryAfterReset = try makeInMemoryContainer()
-            appendContainerLog("SUCCESS in-memory container after reset")
             return memoryAfterReset
-        } catch {
-            appendContainerLog("FAIL in-memory container after reset: \(String(describing: error))")
-        }
+        } catch { }
         do {
             let defaultAfterReset = try makeDefaultContainer()
-            appendContainerLog("SUCCESS default local container after reset")
             return defaultAfterReset
-        } catch {
-            appendContainerLog("FAIL default local container after reset: \(String(describing: error))")
-        }
-
-        appendContainerLog("FATAL all container initialization attempts failed")
+        } catch { }
         fatalError("Failed to create any ModelContainer after all recovery attempts.")
     }
 
@@ -180,16 +153,4 @@ struct FrugalPilotApp: App {
         }
     }
 
-    private static func clearContainerInitLog() {
-        UserDefaults.standard.removeObject(forKey: containerInitLogKey)
-    }
-
-    private static func appendContainerLog(_ message: String) {
-        let ts = ISO8601DateFormatter().string(from: Date())
-        let line = "[\(ts)] \(message)"
-        var logs = UserDefaults.standard.stringArray(forKey: containerInitLogKey) ?? []
-        logs.append(line)
-        UserDefaults.standard.set(logs, forKey: containerInitLogKey)
-        print("ContainerInit:", line)
-    }
 }

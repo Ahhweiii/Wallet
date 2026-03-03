@@ -22,6 +22,8 @@ struct FrugalPilotBackupFile: Codable {
     var budgets: [BudgetEnvelopeData]?
     var savingsGoals: [SavingsGoalData]?
     var billReminders: [BillReminderData]?
+    var spendingAlertThresholds: [String: String]?
+    var appSettings: AccountSettingsSnapshot?
 
     init(exportedAt: Date = Date(),
          accounts: [AccountDTO],
@@ -31,7 +33,9 @@ struct FrugalPilotBackupFile: Codable {
          autoCategoryRules: [AutoCategoryRuleData]? = nil,
          budgets: [BudgetEnvelopeData]? = nil,
          savingsGoals: [SavingsGoalData]? = nil,
-         billReminders: [BillReminderData]? = nil) {
+         billReminders: [BillReminderData]? = nil,
+         spendingAlertThresholds: [String: String]? = nil,
+         appSettings: AccountSettingsSnapshot? = nil) {
         self.version = Self.currentVersion
         self.exportedAt = exportedAt
         self.accounts = accounts
@@ -42,6 +46,8 @@ struct FrugalPilotBackupFile: Codable {
         self.budgets = budgets
         self.savingsGoals = savingsGoals
         self.billReminders = billReminders
+        self.spendingAlertThresholds = spendingAlertThresholds
+        self.appSettings = appSettings
     }
 }
 

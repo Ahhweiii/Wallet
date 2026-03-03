@@ -37,16 +37,8 @@ struct AutomationSetupScreen: View {
 
                 ScrollView(showsIndicators: false) {
                     VStack(alignment: .leading, spacing: 14) {
-                        sectionCard("Recommended Setup (Shortcuts)") {
-                            stepText("1. Open Shortcuts > Automation > New Personal Automation.")
-                            stepText("2. Choose Transaction trigger (Wallet).")
-                            stepText("3. Add action: Quick Add Transaction (FrugalPilot).")
-                            stepText("4. Map amount/date/merchant fields where available.")
-                            stepText("5. Turn off Ask Before Running (optional).")
-                        }
-
-                        sectionCard("Deep Link Examples") {
-                            Text("Use with Open URL action if needed.")
+                        sectionCard("Quick Add Links") {
+                            Text("Reusable links for quick transaction entry.")
                                 .font(.custom("Avenir Next", size: 12))
                                 .foregroundStyle(theme.textSecondary)
 
@@ -87,13 +79,6 @@ struct AutomationSetupScreen: View {
         }
         .padding(14)
         .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
-    }
-
-    private func stepText(_ text: String) -> some View {
-        Text(text)
-            .font(.custom("Avenir Next", size: 12).weight(.medium))
-            .foregroundStyle(theme.textSecondary)
-            .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func copyableURLRow(title: String, url: String) -> some View {

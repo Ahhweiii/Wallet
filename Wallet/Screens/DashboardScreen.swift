@@ -10,6 +10,8 @@ import SwiftData
 import UniformTypeIdentifiers
 import AuthenticationServices
 import StoreKit
+import UIKit
+import UserNotifications
 
 private struct ScrollOffsetKey: PreferenceKey {
     static var defaultValue: CGFloat = 0
@@ -45,6 +47,7 @@ struct DashboardScreen: View {
     @AppStorage("tracking_current_profile") private var currentProfileRaw: String = "Personal"
     @AppStorage("tracking_profiles") private var trackingProfilesRaw: String = "Personal"
     private var currentPlan: SubscriptionPlan { SubscriptionPlan(rawValue: planRaw) ?? .free }
+    private var hasPremiumAccess: Bool { SubscriptionManager.hasProFeatures }
 
     @State private var selectedTab: Int = 0
     @State private var showSidePanel: Bool = false
@@ -90,6 +93,9 @@ struct DashboardScreen: View {
     @State private var transactionFilterType: TransactionFilterType = .all
     @State private var filteredTransactionsCache: [Transaction] = []
     @State private var dueReminderCount: Int = 0
+    @State private var remindersCache: [BillReminderData] = []
+    @State private var spendingAlertThresholds: [UUID: Decimal] = [:]
+    @State private var spendingAlertInputByAccountID: [UUID: String] = [:]
 
     private let maxPerPage: Int = 4
     private let maxRecentTransactions: Int = 20
@@ -114,6 +120,12 @@ struct DashboardScreen: View {
             result.append(name)
         }
         return result
+    }
+
+    private var currentProfileAccounts: [Account] {
+        vm.accounts.filter {
+            $0.profileName.trimmingCharacters(in: .whitespacesAndNewlines) == currentProfileName
+        }
     }
 
     init(modelContext: ModelContext) {
@@ -152,23 +164,12 @@ struct DashboardScreen: View {
         AccountsPagerView.pageCount(totalCards: totalCards, maxPerPage: maxPerPage)
     }
 
-    private var accountById: [UUID: Account] {
-        Dictionary(uniqueKeysWithValues: vm.accounts.map { ($0.id, $0) })
-    }
-
-    private var normalizedAccountNameById: [UUID: String] {
-        Dictionary(uniqueKeysWithValues: vm.accounts.map { ($0.id, $0.displayName.lowercased()) })
-    }
-
     private var canAddAccount: Bool {
         vm.canAddAccount()
     }
 
     private var safeTimestampString: String {
-        let df = DateFormatter()
-        df.locale = Locale(identifier: "en_US_POSIX")
-        df.dateFormat = "yyyy-MM-dd_HH-mm-ss"
-        return df.string(from: Date())
+        DashboardFormatterCache.backupFilenameTimestamp.string(from: Date())
     }
 
     var body: some View {
@@ -275,9 +276,7 @@ struct DashboardScreen: View {
     private func applyLifecycle<V: View>(_ view: V) -> some View {
         view
             .onAppear {
-                if !appleUserId.isEmpty {
-                    AccountSettingsStore.restoreSettings(for: appleUserId)
-                }
+                restoreSettingsIfSignedIn()
                 if trackingProfilesRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     trackingProfilesRaw = "Personal"
                 }
@@ -288,35 +287,37 @@ struct DashboardScreen: View {
                     currentProfileRaw = trackingProfiles.first ?? "Personal"
                 }
                 planRaw = SubscriptionManager.currentPlan.rawValue
+                refreshSubscriptionState()
                 vm.setActiveProfile(currentProfileName)
                 vm.fetchAll()
                 refreshDerivedDashboardData()
+                loadSpendingAlertEditorState()
+                evaluateAccountSpendingAlerts()
                 consumePendingQuickAddDraftIfNeeded()
             }
             .onChange(of: currentProfileRaw) { _, newValue in
                 vm.setActiveProfile(newValue)
                 vm.fetchAll()
-                if !appleUserId.isEmpty {
-                    AccountSettingsStore.saveCurrentSettings(for: appleUserId)
-                }
+                persistCurrentSettingsIfSignedIn()
                 refreshDueReminderCount()
+                loadSpendingAlertEditorState()
+                evaluateAccountSpendingAlerts()
             }
             .onChange(of: trackingProfilesRaw) { _, _ in
-                if !appleUserId.isEmpty {
-                    AccountSettingsStore.saveCurrentSettings(for: appleUserId)
-                }
+                persistCurrentSettingsIfSignedIn()
             }
             .onChange(of: categoryPresetRaw) { _, _ in
-                if !appleUserId.isEmpty {
-                    AccountSettingsStore.saveCurrentSettings(for: appleUserId)
-                }
+                persistCurrentSettingsIfSignedIn()
             }
             .onChange(of: vm.accounts.count) { _, _ in
                 accountPage = min(accountPage, max(0, pagesCount - 1))
                 refreshFilteredTransactions()
+                loadSpendingAlertEditorState()
+                evaluateAccountSpendingAlerts()
             }
             .onChange(of: vm.transactions.count) { _, _ in
                 refreshFilteredTransactions()
+                evaluateAccountSpendingAlerts()
             }
             .onChange(of: transactionSearchText) { _, _ in
                 refreshFilteredTransactions()
@@ -334,9 +335,18 @@ struct DashboardScreen: View {
                     pendingQuickAddDraft = nil
                 }
             }
+            .onChange(of: showNotificationsSheet) { _, isPresented in
+                if isPresented {
+                    refreshRemindersCache()
+                    loadSpendingAlertEditorState()
+                }
+            }
             .onChange(of: scenePhase) { _, phase in
                 guard phase == .active else { return }
+                refreshSubscriptionState()
                 consumePendingQuickAddDraftIfNeeded()
+                refreshRemindersCache()
+                evaluateAccountSpendingAlerts()
             }
             .onReceive(NotificationCenter.default.publisher(for: .quickAddDraftUpdated)) { _ in
                 consumePendingQuickAddDraftIfNeeded()
@@ -397,12 +407,43 @@ struct DashboardScreen: View {
         case 1:
             PlanningScreen()
         case 2:
-            StatisticsScreen()
+            if hasPremiumAccess {
+                StatisticsScreen()
+            } else {
+                premiumLockedView(
+                    title: "Pro Feature",
+                    message: "Advanced statistics and debt planner are available in Pro or Lifetime."
+                )
+            }
         case 3:
             moreTab
         default:
             placeholderTab
         }
+    }
+
+    private func premiumLockedView(title: String, message: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: "lock.circle.fill")
+                .font(.system(size: 34))
+                .foregroundStyle(theme.accent)
+            Text(title)
+                .font(.custom("Avenir Next", size: 18).weight(.bold))
+                .foregroundStyle(theme.textPrimary)
+            Text(message)
+                .font(.custom("Avenir Next", size: 13).weight(.medium))
+                .foregroundStyle(theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+            Button("View Plans") {
+                selectedSettingsTab = .apple
+                showSettingsSheet = true
+            }
+            .font(.custom("Avenir Next", size: 13).weight(.semibold))
+            .foregroundStyle(theme.accent)
+            .padding(.top, 2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var dashboardTab: some View {
@@ -576,7 +617,7 @@ struct DashboardScreen: View {
 
             sidePanelItem(index: 0, title: "Dashboard", icon: "dollarsign.circle")
             sidePanelItem(index: 1, title: "Planning", icon: "clock")
-            sidePanelItem(index: 2, title: "Statistics", icon: "chart.bar")
+            sidePanelItem(index: 2, title: "Statistics", icon: "chart.bar", isLocked: !hasPremiumAccess)
             sidePanelItem(index: 3, title: "More", icon: "ellipsis")
 
             Divider()
@@ -658,7 +699,7 @@ struct DashboardScreen: View {
         )
     }
 
-    private func sidePanelItem(index: Int, title: String, icon: String) -> some View {
+    private func sidePanelItem(index: Int, title: String, icon: String, isLocked: Bool = false) -> some View {
         Button {
             selectedTab = index
             withAnimation(.easeInOut(duration: 0.2)) {
@@ -674,6 +715,12 @@ struct DashboardScreen: View {
                     .font(.custom("Avenir Next", size: 16).weight(.semibold))
 
                 Spacer()
+
+                if isLocked {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(theme.textTertiary)
+                }
             }
             .foregroundStyle(selectedTab == index ? theme.accent : theme.textPrimary)
             .padding(.vertical, 12)
@@ -738,9 +785,10 @@ struct DashboardScreen: View {
                 .padding(.vertical, 30)
 
             } else {
+                let accountMap = Dictionary(uniqueKeysWithValues: vm.accounts.map { ($0.id, $0) })
                 LazyVStack(spacing: 10) {
                     ForEach(filteredTransactionsCache.prefix(maxRecentTransactions)) { txn in
-                        transactionRow(txn)
+                        transactionRow(txn, account: accountMap[txn.accountId])
                     }
                 }
                 .padding(.horizontal, 18)
@@ -750,12 +798,11 @@ struct DashboardScreen: View {
 
     // MARK: - Transaction Row
 
-    private func transactionRow(_ txn: Transaction) -> some View {
+    private func transactionRow(_ txn: Transaction, account: Account?) -> some View {
         let isTransfer = txn.type == .transfer
         let isTransferOut = isTransfer && txn.categoryName == "Transfer Out"
         let isExpense = txn.type == .expense || isTransferOut
         let amountColor: Color = isTransfer ? (isTransferOut ? theme.negative : theme.positive) : (isExpense ? theme.negative : theme.positive)
-        let acct = accountById[txn.accountId]
         let categoryName = txn.categoryName.isEmpty ? (txn.category?.rawValue ?? "Other") : txn.categoryName
         let iconName = isTransfer ? "arrow.left.arrow.right.circle.fill" : TransactionCategory.iconSystemName(for: categoryName)
         let transferCounterparty = isTransfer ? txn.note : ""
@@ -782,7 +829,7 @@ struct DashboardScreen: View {
                         .lineLimit(1)
                 }
 
-                if let acct {
+                if let acct = account {
                     HStack(spacing: 6) {
                         RoundedRectangle(cornerRadius: 4)
                             .fill(Color(hex: acct.colorHex).opacity(0.95))
@@ -870,6 +917,10 @@ struct DashboardScreen: View {
                         .font(.custom("Avenir Next", size: 12).weight(.semibold))
                         .foregroundStyle(theme.textTertiary)
                         .padding(.top, 6)
+
+                    Text("Backups include accounts, transactions, fixed plans, custom categories, smart tools data, spending alerts, and app settings.")
+                        .font(.custom("Avenir Next", size: 11))
+                        .foregroundStyle(theme.textTertiary)
 
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Export Packs")
@@ -999,15 +1050,15 @@ struct DashboardScreen: View {
                 theme.backgroundGradient.ignoresSafeArea()
 
                 ScrollView(showsIndicators: false) {
-                    VStack(spacing: 14) {
+                    VStack(spacing: 12) {
                         Picker("Settings Tabs", selection: $selectedSettingsTab) {
                             ForEach(SettingsTab.allCases) { tab in
                                 Text(tab.rawValue).tag(tab)
                             }
                         }
                         .pickerStyle(.segmented)
-                        .padding(14)
-                        .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
+                        .padding(12)
+                        .background(RoundedRectangle(cornerRadius: 12).fill(theme.surface))
 
                         if selectedSettingsTab == .apple {
                             settingsSectionHeader("Apple Account")
@@ -1033,9 +1084,7 @@ struct DashboardScreen: View {
                                         }
                                         Spacer(minLength: 8)
                                         Button("Sign Out", role: .destructive) {
-                                            if !appleUserId.isEmpty {
-                                                AccountSettingsStore.saveCurrentSettings(for: appleUserId)
-                                            }
+                                            persistCurrentSettingsIfSignedIn()
                                             appleUserId = ""
                                             appleUserName = ""
                                         }
@@ -1044,34 +1093,22 @@ struct DashboardScreen: View {
                                 }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(14)
-                            .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
+                            .padding(12)
+                            .background(RoundedRectangle(cornerRadius: 12).fill(theme.surface))
 
                             settingsSectionHeader("Subscription")
                             VStack(alignment: .leading, spacing: 12) {
-                                if SubscriptionManager.allFeaturesFree {
-                                    HStack(spacing: 8) {
-                                        Image(systemName: "checkmark.seal.fill")
-                                            .foregroundStyle(theme.positive)
-                                        Text("All features are currently unlocked on Free.")
-                                            .font(.custom("Avenir Next", size: 12).weight(.semibold))
-                                            .foregroundStyle(theme.textPrimary)
-                                    }
-                                    .padding(10)
-                                    .background(RoundedRectangle(cornerRadius: 10).fill(theme.surfaceAlt))
-                                } else {
-                                    HStack {
-                                        Text("Current Plan")
-                                            .font(.custom("Avenir Next", size: 13).weight(.semibold))
-                                            .foregroundStyle(theme.textSecondary)
-                                        Spacer()
-                                        Text(currentPlan == .free ? "Free" : "Active")
-                                            .font(.custom("Avenir Next", size: 11).weight(.semibold))
-                                            .foregroundStyle(currentPlan == .free ? theme.textTertiary : theme.positive)
-                                            .padding(.horizontal, 10)
-                                            .padding(.vertical, 4)
-                                            .background(Capsule().fill(theme.surfaceAlt))
-                                    }
+                                HStack {
+                                    Text("Current Plan")
+                                        .font(.custom("Avenir Next", size: 13).weight(.semibold))
+                                        .foregroundStyle(theme.textSecondary)
+                                    Spacer()
+                                    Text(SubscriptionManager.displayName(for: currentPlan))
+                                        .font(.custom("Avenir Next", size: 11).weight(.semibold))
+                                        .foregroundStyle(currentPlan == .free ? theme.textTertiary : theme.positive)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 4)
+                                        .background(Capsule().fill(theme.surfaceAlt))
                                 }
 
                                 VStack(spacing: 8) {
@@ -1079,6 +1116,21 @@ struct DashboardScreen: View {
                                         subscriptionProductRow(descriptor: descriptor)
                                     }
                                 }
+
+                                VStack(alignment: .leading, spacing: 6) {
+                                    Text("Pro includes:")
+                                        .font(.custom("Avenir Next", size: 11).weight(.bold))
+                                        .foregroundStyle(theme.textSecondary)
+                                    Text("• Unlimited accounts and transactions")
+                                    Text("• Smart Tools and Automation")
+                                    Text("• Advanced statistics and receipt scan")
+                                    Text("• Face ID Unlock")
+                                }
+                                .font(.custom("Avenir Next", size: 11).weight(.medium))
+                                .foregroundStyle(theme.textTertiary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(10)
+                                .background(RoundedRectangle(cornerRadius: 10).fill(theme.surfaceAlt))
 
                                 HStack {
                                     Button("Reload Plans") {
@@ -1107,36 +1159,67 @@ struct DashboardScreen: View {
                                             .scaleEffect(0.8)
                                     }
                                 }
-                                .opacity(SubscriptionManager.allFeaturesFree ? 0.65 : 1)
 
-                                Text(SubscriptionManager.allFeaturesFree
-                                     ? "Store plans are still listed, but every feature is unlocked on Free for now."
-                                     : "Purchases are processed by Apple App Store for billing and sales reporting.")
+                                VStack(alignment: .leading, spacing: 8) {
+                                    Text("Voucher Redemption Corner")
+                                        .font(.custom("Avenir Next", size: 11).weight(.bold))
+                                        .foregroundStyle(theme.textSecondary)
+                                    Button {
+                                        redeemVoucher()
+                                    } label: {
+                                        HStack(spacing: 8) {
+                                            Image(systemName: "ticket.fill")
+                                                .font(.system(size: 12, weight: .semibold))
+                                            Text("Redeem Voucher")
+                                                .font(.custom("Avenir Next", size: 12).weight(.semibold))
+                                            Spacer()
+                                            Image(systemName: "chevron.right")
+                                                .font(.system(size: 11, weight: .semibold))
+                                        }
+                                        .foregroundStyle(theme.accent)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 8)
+                                        .background(RoundedRectangle(cornerRadius: 8).fill(theme.surfaceAlt))
+                                    }
+                                    .buttonStyle(.plain)
+                                    Text("Use Apple offer codes to unlock subscription benefits.")
+                                        .font(.custom("Avenir Next", size: 11))
+                                        .foregroundStyle(theme.textTertiary)
+                                }
+
+                                Text("Purchases are processed by Apple App Store for billing and sales reporting.")
                                     .font(.custom("Avenir Next", size: 11))
                                     .foregroundStyle(theme.textTertiary)
 
-                                if store.missingProductIDs.isEmpty == false {
-                                    Text("Unavailable product IDs: \(store.missingProductIDs.joined(separator: ", "))")
-                                        .font(.custom("Menlo", size: 10))
-                                        .foregroundStyle(theme.textTertiary)
-                                }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(14)
-                            .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
+                            .padding(12)
+                            .background(RoundedRectangle(cornerRadius: 12).fill(theme.surface))
                         } else if selectedSettingsTab == .security {
                             settingsSectionHeader("Face ID")
                             VStack(alignment: .leading, spacing: 12) {
                                 Toggle("Face ID Unlock", isOn: $appLockEnabled)
                                     .tint(theme.accent)
                                     .foregroundStyle(theme.textPrimary)
+                                    .disabled(!SubscriptionManager.hasAppLock)
                                 Text("Require Face ID (or device passcode fallback) before accessing your wallet.")
                                     .font(.custom("Avenir Next", size: 12))
                                     .foregroundStyle(theme.textTertiary)
+                                if !SubscriptionManager.hasAppLock {
+                                    Text("Face ID Unlock is available on Pro and Lifetime.")
+                                        .font(.custom("Avenir Next", size: 11).weight(.semibold))
+                                        .foregroundStyle(theme.negative)
+                                    Button("View Plans") {
+                                        selectedSettingsTab = .apple
+                                    }
+                                    .buttonStyle(.plain)
+                                    .font(.custom("Avenir Next", size: 11).weight(.semibold))
+                                    .foregroundStyle(theme.accent)
+                                }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(14)
-                            .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
+                            .padding(12)
+                            .background(RoundedRectangle(cornerRadius: 12).fill(theme.surface))
                         } else {
                             settingsSectionHeader("Appearance")
                             VStack(alignment: .leading, spacing: 12) {
@@ -1148,8 +1231,8 @@ struct DashboardScreen: View {
                                     .foregroundStyle(theme.textTertiary)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(14)
-                            .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
+                            .padding(12)
+                            .background(RoundedRectangle(cornerRadius: 12).fill(theme.surface))
 
                             settingsSectionHeader("Categories")
                             VStack(alignment: .leading, spacing: 10) {
@@ -1168,11 +1251,12 @@ struct DashboardScreen: View {
                                     .foregroundStyle(theme.textTertiary)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(14)
-                            .background(RoundedRectangle(cornerRadius: 14).fill(theme.surface))
+                            .padding(12)
+                            .background(RoundedRectangle(cornerRadius: 12).fill(theme.surface))
                         }
                     }
-                    .padding(20)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 14)
                 }
             }
             .navigationTitle("Settings")
@@ -1192,54 +1276,117 @@ struct DashboardScreen: View {
     }
 
     private var notificationsSheet: some View {
-        let reminders = SmartDataStore.loadReminders()
+        let reminders = remindersCache
             .filter {
                 $0.isEnabled &&
                 $0.profileName.trimmingCharacters(in: .whitespacesAndNewlines) == currentProfileName
             }
             .sorted { $0.chargeDay < $1.chargeDay }
+        let accounts = currentProfileAccounts
 
         return NavigationStack {
             ZStack {
                 theme.backgroundGradient.ignoresSafeArea()
-
-                if reminders.isEmpty {
-                    VStack(spacing: 10) {
-                        Image(systemName: "bell.slash")
-                            .font(.system(size: 34))
-                            .foregroundStyle(theme.textTertiary)
-                        Text("No reminders yet")
-                            .font(.custom("Avenir Next", size: 14).weight(.semibold))
+                List {
+                    Section {
+                        Text("Get notified when an account's current cycle spending reaches your amount. This feature is available on Free.")
+                            .font(.custom("Avenir Next", size: 12))
                             .foregroundStyle(theme.textSecondary)
+                            .listRowBackground(Color.clear)
+                    } header: {
+                        Text("Account Spending Alerts")
+                            .font(.custom("Avenir Next", size: 12).weight(.bold))
                     }
-                } else {
-                    List {
-                        ForEach(reminders) { reminder in
-                            HStack(spacing: 10) {
-                                Circle()
-                                    .fill(theme.surfaceAlt)
-                                    .frame(width: 30, height: 30)
-                                    .overlay(
-                                        Image(systemName: "calendar.badge.clock")
-                                            .font(.system(size: 13, weight: .semibold))
-                                            .foregroundStyle(theme.accent)
-                                    )
-                                VStack(alignment: .leading, spacing: 2) {
-                                    Text(reminder.title)
+
+                    if accounts.isEmpty {
+                        Text("No accounts yet. Add an account to set alerts.")
+                            .font(.custom("Avenir Next", size: 12))
+                            .foregroundStyle(theme.textTertiary)
+                            .listRowBackground(Color.clear)
+                    } else {
+                        ForEach(accounts) { account in
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Text(account.displayName)
                                         .font(.custom("Avenir Next", size: 14).weight(.semibold))
                                         .foregroundStyle(theme.textPrimary)
-                                    Text("Day \(reminder.chargeDay) • \(CurrencyFormatter.sgd(amount: reminder.amount))")
+                                    Spacer()
+                                    let spent = currentCycleSpent(for: account)
+                                    Text("Spent \(CurrencyFormatter.sgd(amount: spent))")
                                         .font(.custom("Avenir Next", size: 11))
                                         .foregroundStyle(theme.textSecondary)
                                 }
-                                Spacer()
+
+                                HStack(spacing: 8) {
+                                    TextField("Alert amount", text: spendingAlertBinding(for: account.id))
+                                        .keyboardType(.decimalPad)
+                                        .textInputAutocapitalization(.never)
+                                        .autocorrectionDisabled(true)
+                                        .font(.custom("Avenir Next", size: 13).weight(.semibold))
+                                        .foregroundStyle(theme.textPrimary)
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 8)
+                                        .background(RoundedRectangle(cornerRadius: 10).fill(theme.surfaceAlt))
+
+                                    Button("Save") {
+                                        saveSpendingAlertThreshold(for: account)
+                                    }
+                                    .font(.custom("Avenir Next", size: 12).weight(.semibold))
+
+                                    Button("Clear") {
+                                        clearSpendingAlertThreshold(for: account)
+                                    }
+                                    .font(.custom("Avenir Next", size: 12).weight(.semibold))
+                                    .foregroundStyle(theme.negative)
+                                }
+
+                                if let threshold = spendingAlertThresholds[account.id] {
+                                    Text("Alert at \(CurrencyFormatter.sgd(amount: threshold))")
+                                        .font(.custom("Avenir Next", size: 11))
+                                        .foregroundStyle(theme.textTertiary)
+                                }
                             }
                             .listRowBackground(Color.clear)
                         }
                     }
-                    .listStyle(.plain)
-                    .scrollContentBackground(.hidden)
+
+                    Section {
+                        if reminders.isEmpty {
+                            Text("No reminders yet")
+                                .font(.custom("Avenir Next", size: 12))
+                                .foregroundStyle(theme.textTertiary)
+                                .listRowBackground(Color.clear)
+                        } else {
+                            ForEach(reminders) { reminder in
+                                HStack(spacing: 10) {
+                                    Circle()
+                                        .fill(theme.surfaceAlt)
+                                        .frame(width: 30, height: 30)
+                                        .overlay(
+                                            Image(systemName: "calendar.badge.clock")
+                                                .font(.system(size: 13, weight: .semibold))
+                                                .foregroundStyle(theme.accent)
+                                        )
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(reminder.title)
+                                            .font(.custom("Avenir Next", size: 14).weight(.semibold))
+                                            .foregroundStyle(theme.textPrimary)
+                                        Text("Day \(reminder.chargeDay) • \(CurrencyFormatter.sgd(amount: reminder.amount))")
+                                            .font(.custom("Avenir Next", size: 11))
+                                            .foregroundStyle(theme.textSecondary)
+                                    }
+                                    Spacer()
+                                }
+                                .listRowBackground(Color.clear)
+                            }
+                        }
+                    } header: {
+                        Text("Bill Reminders")
+                            .font(.custom("Avenir Next", size: 12).weight(.bold))
+                    }
                 }
+                .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
             .navigationTitle("Notifications")
             .navigationBarTitleDisplayMode(.inline)
@@ -1249,7 +1396,130 @@ struct DashboardScreen: View {
                         .foregroundStyle(theme.textPrimary)
                 }
             }
+            .onAppear {
+                loadSpendingAlertEditorState()
+            }
         }
+    }
+
+    private func spendingAlertBinding(for accountID: UUID) -> Binding<String> {
+        Binding(
+            get: { spendingAlertInputByAccountID[accountID] ?? "" },
+            set: { spendingAlertInputByAccountID[accountID] = $0 }
+        )
+    }
+
+    private func loadSpendingAlertEditorState() {
+        spendingAlertThresholds = AccountSpendingAlertStore.loadThresholds()
+        var inputs: [UUID: String] = [:]
+        for account in currentProfileAccounts {
+            if let threshold = spendingAlertThresholds[account.id] {
+                inputs[account.id] = NSDecimalNumber(decimal: threshold).stringValue
+            }
+        }
+        spendingAlertInputByAccountID = inputs
+    }
+
+    private func saveSpendingAlertThreshold(for account: Account) {
+        let rawValue = (spendingAlertInputByAccountID[account.id] ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if rawValue.isEmpty {
+            clearSpendingAlertThreshold(for: account)
+            return
+        }
+
+        let normalized = rawValue.replacingOccurrences(of: ",", with: "")
+        guard let threshold = Decimal(string: normalized), threshold > 0 else {
+            storeStatusMessage = "Enter a valid alert amount greater than 0."
+            showStoreStatusAlert = true
+            return
+        }
+
+        AccountSpendingAlertStore.setThreshold(threshold, for: account.id)
+        AccountSpendingAlertStore.setNotified(false, for: account.id)
+        spendingAlertThresholds[account.id] = threshold
+        spendingAlertInputByAccountID[account.id] = NSDecimalNumber(decimal: threshold).stringValue
+
+        requestLocalNotificationPermissionIfNeeded()
+        evaluateAccountSpendingAlerts()
+
+        storeStatusMessage = "Spending alert saved for \(account.displayName)."
+        showStoreStatusAlert = true
+    }
+
+    private func clearSpendingAlertThreshold(for account: Account) {
+        AccountSpendingAlertStore.setThreshold(nil, for: account.id)
+        AccountSpendingAlertStore.setNotified(false, for: account.id)
+        spendingAlertThresholds[account.id] = nil
+        spendingAlertInputByAccountID[account.id] = ""
+        storeStatusMessage = "Spending alert cleared for \(account.displayName)."
+        showStoreStatusAlert = true
+    }
+
+    private func evaluateAccountSpendingAlerts() {
+        let thresholds = AccountSpendingAlertStore.loadThresholds()
+        spendingAlertThresholds = thresholds
+
+        for account in currentProfileAccounts {
+            guard let threshold = thresholds[account.id], threshold > 0 else { continue }
+            let spent = currentCycleSpent(for: account)
+
+            if spent >= threshold {
+                if !AccountSpendingAlertStore.isNotified(for: account.id) {
+                    scheduleSpendingAlertNotification(account: account, spent: spent, threshold: threshold)
+                    AccountSpendingAlertStore.setNotified(true, for: account.id)
+                }
+            } else {
+                AccountSpendingAlertStore.setNotified(false, for: account.id)
+            }
+        }
+    }
+
+    private func requestLocalNotificationPermissionIfNeeded() {
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            switch settings.authorizationStatus {
+            case .authorized, .provisional, .ephemeral:
+                return
+            case .notDetermined:
+                center.requestAuthorization(options: [.alert, .badge, .sound]) { granted, _ in
+                    guard granted == false else { return }
+                    DispatchQueue.main.async {
+                        storeStatusMessage = "Notifications are disabled. Enable notifications in iOS Settings to receive spending alerts."
+                        showStoreStatusAlert = true
+                    }
+                }
+            default:
+                DispatchQueue.main.async {
+                    storeStatusMessage = "Notifications are disabled. Enable notifications in iOS Settings to receive spending alerts."
+                    showStoreStatusAlert = true
+                }
+            }
+        }
+    }
+
+    private func scheduleSpendingAlertNotification(account: Account, spent: Decimal, threshold: Decimal) {
+        let center = UNUserNotificationCenter.current()
+        center.getNotificationSettings { settings in
+            guard settings.authorizationStatus == .authorized || settings.authorizationStatus == .provisional else { return }
+
+            let content = UNMutableNotificationContent()
+            content.title = "Spending Alert"
+            content.body = "\(account.displayName) reached \(CurrencyFormatter.sgd(amount: spent)). Your alert was \(CurrencyFormatter.sgd(amount: threshold))."
+            content.sound = .default
+
+            let request = UNNotificationRequest(
+                identifier: "spending-alert-\(account.id.uuidString)-\(Int(Date().timeIntervalSince1970))",
+                content: content,
+                trigger: UNTimeIntervalNotificationTrigger(timeInterval: 1, repeats: false)
+            )
+            center.add(request)
+        }
+    }
+
+    private func currentCycleSpent(for account: Account) -> Decimal {
+        vm.periodExpenses(for: account.id, monthOffset: 0)
     }
 
     private func addProfile() {
@@ -1314,20 +1584,22 @@ struct DashboardScreen: View {
             .background(RoundedRectangle(cornerRadius: 10).fill(theme.surfaceAlt))
         }
         .buttonStyle(.plain)
-        .disabled(SubscriptionManager.allFeaturesFree || store.isPurchasing || store.product(for: descriptor.plan) == nil)
+        .disabled(store.isPurchasing || store.product(for: descriptor.plan) == nil)
     }
 
     private func settingsSectionHeader(_ title: String) -> some View {
         HStack {
             Text(title)
-                .font(.custom("Avenir Next", size: 12).weight(.bold))
+                .font(.custom("Avenir Next", size: 11).weight(.bold))
+                .textCase(.uppercase)
+                .tracking(0.3)
                 .foregroundStyle(theme.textSecondary)
             Spacer()
         }
         .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.vertical, 5)
         .background(
-            RoundedRectangle(cornerRadius: 10)
+            RoundedRectangle(cornerRadius: 9)
                 .fill(theme.surface.opacity(0.95))
         )
     }
@@ -1371,10 +1643,13 @@ struct DashboardScreen: View {
             + result.budgetCount
             + result.savingsGoalCount
             + result.billReminderCount
-        return "Backup imported successfully (\(total) items)."
+            + result.spendingAlertThresholdCount
+        let settingsText = result.restoredAppSettings ? " App settings restored." : ""
+        return "Backup imported successfully (\(total) items).\(settingsText)"
     }
 
     private func refreshDerivedDashboardData() {
+        refreshRemindersCache()
         refreshFilteredTransactions()
         refreshDueReminderCount()
     }
@@ -1383,18 +1658,18 @@ struct DashboardScreen: View {
         let normalizedQuery = transactionSearchText
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        let accountNameById = normalizedAccountNameById
+        let accountNameById = Dictionary(uniqueKeysWithValues: vm.accounts.map { ($0.id, $0.displayName.lowercased()) })
+
+        let typeFilter = transactionFilterType
 
         filteredTransactionsCache = vm.transactions.filter { txn in
-            let byType: Bool = {
-                switch transactionFilterType {
-                case .all: return true
-                case .expense: return txn.type == .expense
-                case .income: return txn.type == .income
-                case .transfer: return txn.type == .transfer
-                }
-            }()
-            guard byType else { return false }
+            switch typeFilter {
+            case .all: break
+            case .expense where txn.type != .expense: return false
+            case .income where txn.type != .income: return false
+            case .transfer where txn.type != .transfer: return false
+            default: break
+            }
 
             guard !normalizedQuery.isEmpty else { return true }
             let accountName = accountNameById[txn.accountId] ?? ""
@@ -1405,14 +1680,17 @@ struct DashboardScreen: View {
     }
 
     private func refreshDueReminderCount() {
-        let reminders = SmartDataStore.loadReminders()
         let calendar = Calendar.current
         let today = calendar.component(.day, from: Date())
-        dueReminderCount = reminders.filter { reminder in
+        dueReminderCount = remindersCache.filter { reminder in
             guard reminder.isEnabled else { return false }
             guard reminder.profileName.trimmingCharacters(in: .whitespacesAndNewlines) == currentProfileName else { return false }
             return reminder.chargeDay >= today && reminder.chargeDay <= (today + 3)
         }.count
+    }
+
+    private func refreshRemindersCache() {
+        remindersCache = SmartDataStore.loadReminders()
     }
 
     private func handleAppleSignInResult(_ result: Result<ASAuthorization, Error>) {
@@ -1425,19 +1703,33 @@ struct DashboardScreen: View {
             }
             appleUserId = credential.user
 
-            let formatter = PersonNameComponentsFormatter()
-            let name = formatter.string(from: credential.fullName ?? PersonNameComponents())
+            let name = DashboardFormatterCache.personName.string(from: credential.fullName ?? PersonNameComponents())
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if !name.isEmpty {
                 appleUserName = name
             } else if appleUserName.isEmpty {
                 appleUserName = "Apple User"
             }
-            appleSignInMessage = "Signed in with Apple ID successfully."
-            showAppleSignInAlert = true
+            Task {
+                let plan = await SubscriptionManager.refreshPlanFromStoreKit()
+                await MainActor.run {
+                    planRaw = plan.rawValue
+                    appleSignInMessage = "Signed in with Apple ID successfully. Current plan: \(SubscriptionManager.displayName(for: plan))."
+                    showAppleSignInAlert = true
+                }
+            }
         case .failure(let error):
             appleSignInMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             showAppleSignInAlert = true
+        }
+    }
+
+    private func refreshSubscriptionState() {
+        Task {
+            let plan = await SubscriptionManager.refreshPlanFromStoreKit()
+            await MainActor.run {
+                planRaw = plan.rawValue
+            }
         }
     }
 
@@ -1452,6 +1744,16 @@ struct DashboardScreen: View {
         pendingQuickAddDraft = draft
         selectedTab = 0
         showAddTransaction = true
+    }
+
+    private func persistCurrentSettingsIfSignedIn() {
+        guard !appleUserId.isEmpty else { return }
+        AccountSettingsStore.saveCurrentSettings(for: appleUserId)
+    }
+
+    private func restoreSettingsIfSignedIn() {
+        guard !appleUserId.isEmpty else { return }
+        AccountSettingsStore.restoreSettings(for: appleUserId)
     }
 
     private var placeholderTab: some View {
@@ -1480,133 +1782,156 @@ struct DashboardScreen: View {
             .padding(.horizontal, 18)
             .padding(.top, 6)
 
-            Button {
+            Text("General")
+                .font(.custom("Avenir Next", size: 12).weight(.bold))
+                .foregroundStyle(theme.textSecondary)
+                .padding(.horizontal, 18)
+
+            moreActionRow(
+                title: "Settings",
+                subtitle: "Apple account, subscription, security, and appearance",
+                icon: "gearshape"
+            ) {
                 showSettingsSheet = true
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "gearshape")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(theme.textPrimary)
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(theme.surfaceAlt))
-
-                    Text("Settings")
-                        .font(.custom("Avenir Next", size: 16).weight(.semibold))
-                        .foregroundStyle(theme.textPrimary)
-
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(theme.textTertiary)
-                }
-                .padding(14)
-                .background(RoundedRectangle(cornerRadius: 14).fill(theme.card))
             }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 18)
 
-            Button {
-                showBackupSheet = true
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "externaldrive.badge.plus")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(theme.textPrimary)
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(theme.surfaceAlt))
-
-                    Text("Backups")
-                        .font(.custom("Avenir Next", size: 16).weight(.semibold))
-                        .foregroundStyle(theme.textPrimary)
-
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(theme.textTertiary)
-                }
-                .padding(14)
-                .background(RoundedRectangle(cornerRadius: 14).fill(theme.card))
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 18)
-
-            Button {
-                showSmartToolsSheet = true
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "wand.and.stars")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(theme.textPrimary)
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(theme.surfaceAlt))
-
-                    Text("Smart Tools")
-                        .font(.custom("Avenir Next", size: 16).weight(.semibold))
-                        .foregroundStyle(theme.textPrimary)
-
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(theme.textTertiary)
-                }
-                .padding(14)
-                .background(RoundedRectangle(cornerRadius: 14).fill(theme.card))
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 18)
-
-            Button {
-                showAutomationSetupSheet = true
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "bolt.horizontal.circle")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(theme.textPrimary)
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(theme.surfaceAlt))
-
-                    Text("Automation Setup")
-                        .font(.custom("Avenir Next", size: 16).weight(.semibold))
-                        .foregroundStyle(theme.textPrimary)
-
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(theme.textTertiary)
-                }
-                .padding(14)
-                .background(RoundedRectangle(cornerRadius: 14).fill(theme.card))
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 18)
-
-            Button {
+            moreActionRow(
+                title: "Profile & Usage",
+                subtitle: "View account status and usage summary",
+                icon: "person.crop.circle"
+            ) {
                 showProfileOverviewSheet = true
-            } label: {
-                HStack(spacing: 12) {
-                    Image(systemName: "person.crop.circle")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundStyle(theme.textPrimary)
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(theme.surfaceAlt))
-
-                    Text("Profile & Usage")
-                        .font(.custom("Avenir Next", size: 16).weight(.semibold))
-                        .foregroundStyle(theme.textPrimary)
-
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(theme.textTertiary)
-                }
-                .padding(14)
-                .background(RoundedRectangle(cornerRadius: 14).fill(theme.card))
             }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 18)
+
+            Text("Tools")
+                .font(.custom("Avenir Next", size: 12).weight(.bold))
+                .foregroundStyle(theme.textSecondary)
+                .padding(.horizontal, 18)
+                .padding(.top, 4)
+
+            moreActionRow(
+                title: "Backups",
+                subtitle: "Export and import wallet backups",
+                icon: "externaldrive.badge.plus",
+                isPremium: false
+            ) {
+                showBackupSheet = true
+            }
+
+            moreActionRow(
+                title: "Smart Tools",
+                subtitle: "Budgets, savings goals, reminders, and auto rules",
+                icon: "wand.and.stars",
+                isPremium: true
+            ) {
+                guard hasPremiumAccess else { openSubscriptionPlans(for: "Smart Tools"); return }
+                showSmartToolsSheet = true
+            }
+
+            moreActionRow(
+                title: "Automation Setup",
+                subtitle: "Shortcuts and quick-add transaction automation",
+                icon: "bolt.horizontal.circle",
+                isPremium: true
+            ) {
+                guard hasPremiumAccess else { openSubscriptionPlans(for: "Automation Setup"); return }
+                showAutomationSetupSheet = true
+            }
 
             Spacer(minLength: 24)
         }
         .padding(.bottom, 32)
     }
+
+    private func moreActionRow(title: String,
+                               subtitle: String,
+                               icon: String,
+                               isPremium: Bool = false,
+                               action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundStyle(theme.textPrimary)
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(theme.surfaceAlt))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(title)
+                            .font(.custom("Avenir Next", size: 16).weight(.semibold))
+                            .foregroundStyle(theme.textPrimary)
+                        if isPremium && !hasPremiumAccess {
+                            Text("Pro")
+                                .font(.custom("Avenir Next", size: 10).weight(.bold))
+                                .foregroundStyle(theme.negative)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(Capsule().fill(theme.surfaceAlt))
+                        }
+                    }
+                    Text(subtitle)
+                        .font(.custom("Avenir Next", size: 11).weight(.medium))
+                        .foregroundStyle(theme.textTertiary)
+                        .lineLimit(2)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(theme.textTertiary)
+            }
+            .padding(14)
+            .background(RoundedRectangle(cornerRadius: 14).fill(theme.card))
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 18)
+    }
+
+    private func openSubscriptionPlans(for feature: String) {
+        selectedSettingsTab = .apple
+        showSettingsSheet = true
+        storeStatusMessage = "\(feature) requires Pro or Lifetime."
+        showStoreStatusAlert = true
+    }
+
+    private func redeemVoucher() {
+        if #available(iOS 18.0, *) {
+            guard let windowScene = UIApplication.shared.connectedScenes
+                .compactMap({ $0 as? UIWindowScene })
+                .first else {
+                storeStatusMessage = "Could not open voucher sheet: no active window scene."
+                showStoreStatusAlert = true
+                return
+            }
+            Task {
+                do {
+                    try await AppStore.presentOfferCodeRedeemSheet(in: windowScene)
+                    await MainActor.run {
+                        storeStatusMessage = "Apple voucher sheet opened. Complete redemption, then tap Restore Purchases if your plan does not update automatically."
+                        showStoreStatusAlert = true
+                    }
+                } catch {
+                    await MainActor.run {
+                        let nsError = error as NSError
+                        storeStatusMessage = "Voucher redemption failed. Native=\(nsError.domain)(\(nsError.code)) Desc=\(nsError.localizedDescription)"
+                        showStoreStatusAlert = true
+                    }
+                }
+            }
+        } else {
+            SKPaymentQueue.default().presentCodeRedemptionSheet()
+            storeStatusMessage = "Apple voucher sheet opened. Complete redemption, then tap Restore Purchases if your plan does not update automatically."
+            showStoreStatusAlert = true
+        }
+    }
+}
+
+private enum DashboardFormatterCache {
+    static let personName = PersonNameComponentsFormatter()
+    static let backupFilenameTimestamp: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd_HH-mm-ss"
+        return formatter
+    }()
 }

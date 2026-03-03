@@ -112,15 +112,20 @@ struct StatisticsScreen: View {
                     .padding(.horizontal, 18)
                     .padding(.top, 6)
 
+                    sectionHeader("Overview")
                     totalAmountCard
                     forecastCard
                     debtPlannerCard
 
-                    chartCard(title: "Auto Generate") {
+                    sectionHeader("Visual Insights")
+
+                    chartCard(title: "Auto Generate",
+                              subtitle: "Choose a chart type and time range. Values are based on the selected profile.") {
                         customChartControls
                     }
 
-                    chartCard(title: "Spending by Category") {
+                    chartCard(title: "Spending by Category",
+                              subtitle: "Pie chart showing how your expense total is split across categories in the last 6 months.") {
                         if expenseByCategory.isEmpty {
                             emptyState
                         } else {
@@ -137,7 +142,8 @@ struct StatisticsScreen: View {
                         }
                     }
 
-                    chartCard(title: "Monthly Spending Trend") {
+                    chartCard(title: "Monthly Spending Trend",
+                              subtitle: "Line chart of monthly expenses. X-axis is month, Y-axis is total amount spent.") {
                         if monthlySeries.isEmpty {
                             emptyState
                         } else {
@@ -157,7 +163,8 @@ struct StatisticsScreen: View {
                         }
                     }
 
-                    chartCard(title: "Income vs Expense") {
+                    chartCard(title: "Income vs Expense",
+                              subtitle: "Bar chart comparing income and expense totals month by month.") {
                         if monthlySeries.isEmpty {
                             emptyState
                         } else {
@@ -182,7 +189,8 @@ struct StatisticsScreen: View {
                         }
                     }
 
-                    chartCard(title: "Fixed Planned Per Month") {
+                    chartCard(title: "Fixed Planned Per Month",
+                              subtitle: "Planned fixed-payment total for each upcoming month.") {
                         if fixedPlannedSeries.allSatisfy({ $0.1 == .zero }) {
                             emptyState
                         } else {
@@ -202,7 +210,8 @@ struct StatisticsScreen: View {
                         }
                     }
 
-                    chartCard(title: "Estimated Net Worth Trend") {
+                    chartCard(title: "Estimated Net Worth Trend",
+                              subtitle: "Running net value from income minus expense over time. Upward means improving balance.") {
                         if netWorthSeries.isEmpty {
                             emptyState
                         } else {
@@ -222,7 +231,8 @@ struct StatisticsScreen: View {
                         }
                     }
 
-                    chartCard(title: "Top Categories") {
+                    chartCard(title: "Top Categories",
+                              subtitle: "Highest-spend categories ranked by total amount in the last 6 months.") {
                         if topCategories.isEmpty {
                             emptyState
                         } else {
@@ -411,6 +421,13 @@ struct StatisticsScreen: View {
         }
     }
 
+    private func sectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.custom("Avenir Next", size: 12).weight(.bold))
+            .foregroundStyle(theme.textSecondary)
+            .padding(.horizontal, 18)
+    }
+
     private func expenseByCategory(monthCount: Int) -> [(String, Decimal)] {
         let calendar = Calendar.current
         let startMonth = calendar.date(byAdding: .month, value: -(monthCount - 1), to: Date()) ?? Date()
@@ -473,11 +490,19 @@ struct StatisticsScreen: View {
         .padding(.vertical, 24)
     }
 
-    private func chartCard<Content: View>(title: String, @ViewBuilder content: () -> Content) -> some View {
+    private func chartCard<Content: View>(title: String,
+                                          subtitle: String? = nil,
+                                          @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 12) {
             Text(title)
                 .font(.custom("Avenir Next", size: 16).weight(.semibold))
                 .foregroundStyle(theme.textPrimary)
+
+            if let subtitle, !subtitle.isEmpty {
+                Text(subtitle)
+                    .font(.custom("Avenir Next", size: 11))
+                    .foregroundStyle(theme.textSecondary)
+            }
 
             content()
         }

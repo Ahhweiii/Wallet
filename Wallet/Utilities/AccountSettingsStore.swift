@@ -26,18 +26,32 @@ enum AccountSettingsStore {
     private static let encoder = JSONEncoder()
     private static let decoder = JSONDecoder()
 
-    static func saveCurrentSettings(for appleUserId: String) {
-        let trimmed = appleUserId.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-
+    static func currentSnapshot() -> AccountSettingsSnapshot {
         let defaults = UserDefaults.standard
-        let snapshot = AccountSettingsSnapshot(
+        return AccountSettingsSnapshot(
             themeIsDark: defaults.object(forKey: themeKey) as? Bool ?? true,
             appLockEnabled: defaults.object(forKey: appLockKey) as? Bool ?? false,
             categoryPresetRaw: defaults.string(forKey: categoryPresetKey) ?? "Singapore",
             currentProfileRaw: defaults.string(forKey: currentProfileKey) ?? "Personal",
             trackingProfilesRaw: defaults.string(forKey: trackingProfilesKey) ?? "Personal"
         )
+    }
+
+    static func apply(_ snapshot: AccountSettingsSnapshot) {
+        let defaults = UserDefaults.standard
+        defaults.set(snapshot.themeIsDark, forKey: themeKey)
+        defaults.set(snapshot.appLockEnabled, forKey: appLockKey)
+        defaults.set(snapshot.categoryPresetRaw, forKey: categoryPresetKey)
+        defaults.set(snapshot.currentProfileRaw, forKey: currentProfileKey)
+        defaults.set(snapshot.trackingProfilesRaw, forKey: trackingProfilesKey)
+    }
+
+    static func saveCurrentSettings(for appleUserId: String) {
+        let trimmed = appleUserId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        let defaults = UserDefaults.standard
+        let snapshot = currentSnapshot()
 
         guard let data = try? encoder.encode(snapshot) else { return }
         defaults.set(data, forKey: storagePrefix + trimmed)
@@ -53,10 +67,6 @@ enum AccountSettingsStore {
             return
         }
 
-        defaults.set(snapshot.themeIsDark, forKey: themeKey)
-        defaults.set(snapshot.appLockEnabled, forKey: appLockKey)
-        defaults.set(snapshot.categoryPresetRaw, forKey: categoryPresetKey)
-        defaults.set(snapshot.currentProfileRaw, forKey: currentProfileKey)
-        defaults.set(snapshot.trackingProfilesRaw, forKey: trackingProfilesKey)
+        apply(snapshot)
     }
 }

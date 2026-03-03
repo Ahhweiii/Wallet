@@ -105,6 +105,10 @@ struct AddTransactionScreen: View {
         return trimmed.isEmpty ? "Personal" : trimmed
     }
 
+    private var hasPremiumAccess: Bool {
+        SubscriptionManager.hasProFeatures
+    }
+
     var body: some View {
         NavigationStack {
             screenContent
@@ -205,17 +209,10 @@ struct AddTransactionScreen: View {
             guard let image else { return }
             scanReceipt(image)
         }
-        .onAppear {
-            guard let fixedAccountId else { return }
-            selectedAccount = vm.accounts.first(where: { $0.id == fixedAccountId })
-            applyInitialDraftIfNeeded()
-        }
+        .onAppear(perform: syncInitialAccountAndDraft)
         .onChange(of: vm.accounts.count) { _, _ in
             guard let fixedAccountId else { return }
             selectedAccount = vm.accounts.first(where: { $0.id == fixedAccountId })
-        }
-        .onAppear {
-            applyInitialDraftIfNeeded()
         }
     }
 
@@ -354,48 +351,47 @@ struct AddTransactionScreen: View {
         }
     }
 
+    @ViewBuilder
     private var categorySection: some View {
         if isCreditCardPayment || selectedType == .transfer {
-            return AnyView(EmptyView())
-        }
+            EmptyView()
+        } else {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Category")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
 
-        return AnyView(
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Category")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(theme.textSecondary)
-
-            Button { showSelectCategory = true } label: {
-                HStack {
-                    if let cat = selectedCategory {
-                        Circle()
-                            .fill(Color.blue.opacity(0.2))
-                            .frame(width: 32, height: 32)
-                            .overlay(
-                                Image(systemName: cat.icon)
-                                    .font(.system(size: 14))
-                                    .foregroundStyle(.blue)
-                            )
-                        Text(cat.name)
-                            .font(.system(size: 16, weight: .semibold))
-                            .foregroundStyle(theme.textPrimary)
-                    } else {
-                        Image(systemName: "square.grid.2x2").foregroundStyle(theme.textTertiary)
-                        Text("Select Category")
-                            .font(.system(size: 16, weight: .semibold))
+                Button { showSelectCategory = true } label: {
+                    HStack {
+                        if let cat = selectedCategory {
+                            Circle()
+                                .fill(Color.blue.opacity(0.2))
+                                .frame(width: 32, height: 32)
+                                .overlay(
+                                    Image(systemName: cat.icon)
+                                        .font(.system(size: 14))
+                                        .foregroundStyle(.blue)
+                                )
+                            Text(cat.name)
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(theme.textPrimary)
+                        } else {
+                            Image(systemName: "square.grid.2x2").foregroundStyle(theme.textTertiary)
+                            Text("Select Category")
+                                .font(.system(size: 16, weight: .semibold))
+                                .foregroundStyle(theme.textTertiary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(theme.textTertiary)
                     }
-                    Spacer()
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(theme.textTertiary)
+                    .padding(14)
+                    .background(RoundedRectangle(cornerRadius: 12).fill(theme.surfaceAlt))
                 }
-                .padding(14)
-                .background(RoundedRectangle(cornerRadius: 12).fill(theme.surfaceAlt))
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
-        )
     }
 
     private var creditPaymentSection: some View {
@@ -512,6 +508,11 @@ struct AddTransactionScreen: View {
                 .foregroundStyle(theme.textSecondary)
 
             Button {
+                if !hasPremiumAccess {
+                    presentReceiptResult(title: "Pro Required",
+                                         message: "Receipt scan is available on Pro and Lifetime.")
+                    return
+                }
                 if !isProcessingReceipt {
                     showReceiptSourcePicker = true
                 }
@@ -527,6 +528,11 @@ struct AddTransactionScreen: View {
                         Text("Take a photo or select one to auto-fill amount, date, and note.")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(theme.textTertiary)
+                        if !hasPremiumAccess {
+                            Text("Upgrade to Pro or Lifetime to use receipt scan.")
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(theme.negative)
+                        }
                     }
                     Spacer()
                     if isProcessingReceipt {
@@ -989,6 +995,13 @@ struct AddTransactionScreen: View {
         receiptResultTitle = title
         receiptResultMessage = message
         showReceiptResultAlert = true
+    }
+
+    private func syncInitialAccountAndDraft() {
+        if let fixedAccountId {
+            selectedAccount = vm.accounts.first(where: { $0.id == fixedAccountId })
+        }
+        applyInitialDraftIfNeeded()
     }
 
     private func applyInitialDraftIfNeeded() {

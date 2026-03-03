@@ -22,7 +22,9 @@ struct ContentView: View {
     @State private var isUnlocked: Bool = true
     @State private var showLockError: Bool = false
     @State private var showAppleSignInError: Bool = false
+    @State private var showAppleSignInSuccess: Bool = false
     @State private var appleSignInErrorMessage: String = "Unable to sign in with Apple ID."
+    @State private var appleSignInSuccessMessage: String = ""
     @State private var biometryType: LABiometryType = .none
 
     private var theme: AppTheme {
@@ -67,9 +69,8 @@ struct ContentView: View {
         }
         .onAppear {
             refreshBiometryType()
-            if !appleUserId.isEmpty {
-                AccountSettingsStore.restoreSettings(for: appleUserId)
-            }
+            restoreSettingsIfSignedIn()
+            if !appleUserId.isEmpty { refreshPurchasedPlanStatus() }
             if appLockEnabled {
                 isUnlocked = false
                 authenticate()
@@ -81,17 +82,12 @@ struct ContentView: View {
             }
             if !newValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 AccountSettingsStore.restoreSettings(for: newValue)
+                refreshPurchasedPlanStatus()
             }
         }
-        .onChange(of: themeIsDark) { _, _ in
-            if !appleUserId.isEmpty {
-                AccountSettingsStore.saveCurrentSettings(for: appleUserId)
-            }
-        }
+        .onChange(of: themeIsDark) { _, _ in persistCurrentSettingsIfSignedIn() }
         .onChange(of: appLockEnabled) { _, enabled in
-            if !appleUserId.isEmpty {
-                AccountSettingsStore.saveCurrentSettings(for: appleUserId)
-            }
+            persistCurrentSettingsIfSignedIn()
             if enabled {
                 isUnlocked = false
                 authenticate()
@@ -100,11 +96,15 @@ struct ContentView: View {
             }
         }
         .onChange(of: scenePhase) { _, phase in
-            if !appLockEnabled { return }
             if phase == .background {
-                isUnlocked = false
-            } else if phase == .active, !isUnlocked {
-                authenticate()
+                if appLockEnabled {
+                    isUnlocked = false
+                }
+            } else if phase == .active {
+                refreshPurchasedPlanStatus()
+                if appLockEnabled && !isUnlocked {
+                    authenticate()
+                }
             }
         }
         .alert("Unlock Failed", isPresented: $showLockError) {
@@ -116,6 +116,11 @@ struct ContentView: View {
             Button("OK", role: .cancel) { }
         } message: {
             Text(appleSignInErrorMessage)
+        }
+        .alert("Apple ID", isPresented: $showAppleSignInSuccess) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(appleSignInSuccessMessage)
         }
         .onOpenURL { url in
             handleIncomingURL(url)
@@ -214,17 +219,29 @@ struct ContentView: View {
             }
             appleUserId = credential.user
 
-            let formatter = PersonNameComponentsFormatter()
-            let name = formatter.string(from: credential.fullName ?? PersonNameComponents())
+            let name = FormatterCache.personName.string(from: credential.fullName ?? PersonNameComponents())
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if !name.isEmpty {
                 appleUserName = name
             } else if appleUserName.isEmpty {
                 appleUserName = "Apple User"
             }
+            Task {
+                let plan = await SubscriptionManager.refreshPlanFromStoreKit()
+                await MainActor.run {
+                    appleSignInSuccessMessage = "Signed in successfully. Current plan: \(SubscriptionManager.displayName(for: plan))."
+                    showAppleSignInSuccess = true
+                }
+            }
         case .failure(let error):
             appleSignInErrorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
             showAppleSignInError = true
+        }
+    }
+
+    private func refreshPurchasedPlanStatus() {
+        Task {
+            _ = await SubscriptionManager.refreshPlanFromStoreKit()
         }
     }
 
@@ -240,12 +257,8 @@ struct ContentView: View {
 
         let parsedDate: Date? = {
             guard let raw = queryItems["date"], !raw.isEmpty else { return nil }
-            let iso = ISO8601DateFormatter()
-            if let d = iso.date(from: raw) { return d }
-            let formatter = DateFormatter()
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.dateFormat = "yyyy-MM-dd"
-            return formatter.date(from: raw)
+            if let d = FormatterCache.iso8601.date(from: raw) { return d }
+            return FormatterCache.shortDate.date(from: raw)
         }()
 
         let draft = TransactionQuickAddDraft(typeRaw: rawType,
@@ -255,6 +268,27 @@ struct ContentView: View {
                                              categoryName: category)
         TransactionQuickAddDraftStore.savePending(draft)
     }
+
+    private func persistCurrentSettingsIfSignedIn() {
+        guard !appleUserId.isEmpty else { return }
+        AccountSettingsStore.saveCurrentSettings(for: appleUserId)
+    }
+
+    private func restoreSettingsIfSignedIn() {
+        guard !appleUserId.isEmpty else { return }
+        AccountSettingsStore.restoreSettings(for: appleUserId)
+    }
+}
+
+private enum FormatterCache {
+    static let personName = PersonNameComponentsFormatter()
+    static let iso8601 = ISO8601DateFormatter()
+    static let shortDate: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
 }
 
 #Preview {

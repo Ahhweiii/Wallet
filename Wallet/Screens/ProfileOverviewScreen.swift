@@ -56,14 +56,17 @@ struct ProfileOverviewScreen: View {
         allTransactions.filter { profileAccountIds.contains($0.accountId) }
     }
 
+    private var profileTransactionCategoryKeys: Set<String> {
+        Set(profileTransactions.map { $0.categoryName.lowercased() })
+    }
+
     private var profileFixedPayments: [FixedPayment] {
         allFixedPayments.filter { normalizedProfile($0.profileName) == currentProfileName }
     }
 
     private var profileCustomCategories: [CustomCategory] {
         allCustomCategories.filter { category in
-            let key = category.name.lowercased()
-            return profileTransactions.contains(where: { $0.categoryName.lowercased() == key })
+            profileTransactionCategoryKeys.contains(category.name.lowercased())
         }
     }
 
@@ -83,18 +86,21 @@ struct ProfileOverviewScreen: View {
         rules.filter { normalizedProfile($0.profileName) == currentProfileName }
     }
 
-    private var spentThisMonth: Decimal {
+    private var monthSummary: (spent: Decimal, income: Decimal) {
         let monthStart = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: Date())) ?? Date()
-        return profileTransactions
-            .filter { $0.type == .expense && $0.date >= monthStart }
-            .reduce(.zero) { $0 + $1.amount }
-    }
-
-    private var incomeThisMonth: Decimal {
-        let monthStart = Calendar.current.date(from: Calendar.current.dateComponents([.year, .month], from: Date())) ?? Date()
-        return profileTransactions
-            .filter { $0.type == .income && $0.date >= monthStart }
-            .reduce(.zero) { $0 + $1.amount }
+        var spent: Decimal = .zero
+        var income: Decimal = .zero
+        for txn in profileTransactions where txn.date >= monthStart {
+            switch txn.type {
+            case .expense:
+                spent += txn.amount
+            case .income:
+                income += txn.amount
+            case .transfer:
+                break
+            }
+        }
+        return (spent, income)
     }
 
     var body: some View {
@@ -107,8 +113,7 @@ struct ProfileOverviewScreen: View {
                         sectionCard("Profile") {
                             infoRow("Current Profile", currentProfileName)
                             infoRow("Apple Account", appleUserId.isEmpty ? "Not signed in" : (appleUserName.isEmpty ? "Apple User" : appleUserName))
-                            infoRow("Subscription", currentPlan.rawValue)
-                            infoRow("All Features on Free", SubscriptionManager.allFeaturesFree ? "Enabled" : "Disabled")
+                            infoRow("Subscription", SubscriptionManager.displayName(for: currentPlan))
                         }
 
                         sectionCard("Sync & Security") {
@@ -126,8 +131,8 @@ struct ProfileOverviewScreen: View {
                             infoRow("Transactions", "\(profileTransactions.count)")
                             infoRow("Fixed Plans", "\(profileFixedPayments.count)")
                             infoRow("Custom Categories", "\(profileCustomCategories.count)")
-                            infoRow("Spent This Month", CurrencyFormatter.sgd(amount: spentThisMonth))
-                            infoRow("Income This Month", CurrencyFormatter.sgd(amount: incomeThisMonth))
+                            infoRow("Spent This Month", CurrencyFormatter.sgd(amount: monthSummary.spent))
+                            infoRow("Income This Month", CurrencyFormatter.sgd(amount: monthSummary.income))
                         }
 
                         sectionCard("Smart Tools") {

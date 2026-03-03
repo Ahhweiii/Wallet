@@ -174,11 +174,16 @@
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2620;
 				LastUpgradeCheck = 2630;
-				TargetAttributes = {
-					E4BD1D582F4A056800564AAD = {
-						CreatedOnToolsVersion = 26.2;
-					};
-					E4BD1D672F4A056A00564AAD = {
+					TargetAttributes = {
+						E4BD1D582F4A056800564AAD = {
+							CreatedOnToolsVersion = 26.2;
+							SystemCapabilities = {
+								com.apple.Push = {
+									enabled = 1;
+								};
+							};
+						};
+						E4BD1D672F4A056A00564AAD = {
 						CreatedOnToolsVersion = 26.2;
 						TestTargetID = E4BD1D582F4A056800564AAD;
 					};
@@ -368,7 +373,7 @@
 				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
 				CLANG_WARN_UNREACHABLE_CODE = YES;
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
-				COPY_PHASE_STRIP = NO;
+				COPY_PHASE_STRIP = YES;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -398,13 +403,12 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Wallet/Wallet.entitlements;
-				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 3J265QU72U;
 				ENABLE_PREVIEWS = YES;
-					GENERATE_INFOPLIST_FILE = NO;
-					INFOPLIST_FILE = FrugalPilot-Info.plist;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "FrugalPilot-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = FrugalPilot;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Allow camera access to scan receipt photos.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Use Face ID to unlock FrugalPilot.";
@@ -422,7 +426,6 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "ahhweii.Frugal-Pilot";
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
@@ -439,13 +442,12 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Wallet/Wallet.entitlements;
-				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 3J265QU72U;
-				ENABLE_PREVIEWS = YES;
-					GENERATE_INFOPLIST_FILE = NO;
-					INFOPLIST_FILE = FrugalPilot-Info.plist;
+				ENABLE_PREVIEWS = NO;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = "FrugalPilot-Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = FrugalPilot;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Allow camera access to scan receipt photos.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Use Face ID to unlock FrugalPilot.";
@@ -463,7 +465,6 @@
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = "ahhweii.Frugal-Pilot";
 				PRODUCT_NAME = "$(TARGET_NAME)";
-				PROVISIONING_PROFILE_SPECIFIER = "";
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;

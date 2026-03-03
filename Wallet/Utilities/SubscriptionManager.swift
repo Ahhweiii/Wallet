@@ -6,11 +6,10 @@
 //
 
 import Foundation
+import StoreKit
 
 enum SubscriptionPlan: String, CaseIterable, Identifiable {
     case free
-    case proLiteMonthly
-    case proLiteYearly
     case proMonthly
     case proYearly
     case lifetime
@@ -29,16 +28,54 @@ struct SubscriptionPlanDescriptor: Identifiable {
 enum SubscriptionManager {
     static let planKey = "subscription_plan"
     static let legacyProEnabledKey = "pro_enabled"
-    // Temporary rollout flag: keep every feature unlocked while still preserving StoreKit plumbing.
-    static let allFeaturesFree = false
     static let freeAccountLimit = 3
     static let freeMonthlyTransactionLimit = 200
     static let unlimitedCountText = "Unlimited"
+    static let planCatalog: [SubscriptionPlanDescriptor] = [
+        SubscriptionPlanDescriptor(plan: .proMonthly,
+                                   title: "Pro - Monthly",
+                                   subtitle: "All premium features",
+                                   priority: 1),
+        SubscriptionPlanDescriptor(plan: .proYearly,
+                                   title: "Pro - Yearly",
+                                   subtitle: "All premium features",
+                                   priority: 2),
+        SubscriptionPlanDescriptor(plan: .lifetime,
+                                   title: "Lifetime",
+                                   subtitle: "All premium features forever",
+                                   priority: 3)
+    ]
+    private static var updatesListenerTask: Task<Void, Never>?
+    private static let productIDsByPlan: [SubscriptionPlan: [String]] = [
+        .free: [],
+        .proMonthly: [
+            "ahhweii.frugalpilot.pro.monthly"
+        ],
+        .proYearly: [
+            "ahhweii.frugalpilot.pro.yearly"
+        ],
+        .lifetime: [
+            "ahhweii.frugalpilot.lifetime.v2"
+        ]
+    ]
+    private static let productIDToPlan: [String: SubscriptionPlan] = {
+        var map: [String: SubscriptionPlan] = [:]
+        for (plan, productIDs) in productIDsByPlan {
+            for productID in productIDs {
+                map[productID] = plan
+            }
+        }
+        return map
+    }()
+    private static let planPriorityByPlan: [SubscriptionPlan: Int] = {
+        Dictionary(uniqueKeysWithValues: planCatalog.map { ($0.plan, $0.priority) })
+    }()
 
     static var currentPlan: SubscriptionPlan {
-        if let raw = UserDefaults.standard.string(forKey: planKey),
-           let plan = SubscriptionPlan(rawValue: raw) {
-            return plan
+        if let raw = UserDefaults.standard.string(forKey: planKey) {
+            if let plan = SubscriptionPlan(rawValue: raw) {
+                return plan
+            }
         }
         if UserDefaults.standard.bool(forKey: legacyProEnabledKey) {
             UserDefaults.standard.set(SubscriptionPlan.proMonthly.rawValue, forKey: planKey)
@@ -52,30 +89,19 @@ enum SubscriptionManager {
     }
 
     static var accountLimitText: String {
-        allFeaturesFree ? unlimitedCountText : String(freeAccountLimit)
+        hasPaidLimits ? unlimitedCountText : String(freeAccountLimit)
     }
 
     static var monthlyTransactionLimitText: String {
-        allFeaturesFree ? unlimitedCountText : String(freeMonthlyTransactionLimit)
+        hasPaidLimits ? unlimitedCountText : String(freeMonthlyTransactionLimit)
     }
 
     static var hasPaidLimits: Bool {
-        if allFeaturesFree { return true }
-        switch currentPlan {
-        case .free: return false
-        case .proLiteMonthly, .proLiteYearly, .proMonthly, .proYearly, .lifetime:
-            return true
-        }
+        currentPlan != .free
     }
 
     static var hasProFeatures: Bool {
-        if allFeaturesFree { return true }
-        switch currentPlan {
-        case .proMonthly, .proYearly, .lifetime:
-            return true
-        case .free, .proLiteMonthly, .proLiteYearly:
-            return false
-        }
+        hasPaidLimits
     }
 
     static var hasICloudSync: Bool {
@@ -83,86 +109,55 @@ enum SubscriptionManager {
     }
 
     static var hasAppLock: Bool {
-        if allFeaturesFree { return true }
         return hasProFeatures
     }
 
-    static var isProLite: Bool {
-        switch currentPlan {
-        case .proLiteMonthly, .proLiteYearly: return true
-        default: return false
+    static func displayName(for plan: SubscriptionPlan) -> String {
+        switch plan {
+        case .free: return "Free"
+        case .proMonthly: return "Pro Monthly"
+        case .proYearly: return "Pro Yearly"
+        case .lifetime: return "Lifetime"
         }
-    }
-
-    static func productID(for plan: SubscriptionPlan) -> String? {
-        productIDs(for: plan).first
     }
 
     static func productIDs(for plan: SubscriptionPlan) -> [String] {
-        switch plan {
-        case .free:
-            return []
-        case .proLiteMonthly:
-            return [
-                "ahhweii.frugalpilot.prolite.monthly",
-                "ahhweii.Frugal-Pilot.prolite.monthly",
-                "ahhweii.FrugalPilot.prolite.monthly"
-            ]
-        case .proLiteYearly:
-            return [
-                "ahhweii.frugalpilot.prolite.yearly",
-                "ahhweii.Frugal-Pilot.prolite.yearly",
-                "ahhweii.FrugalPilot.prolite.yearly"
-            ]
-        case .proMonthly:
-            return [
-                "ahhweii.frugalpilot.pro.monthly",
-                "ahhweii.Frugal-Pilot.pro.monthly",
-                "ahhweii.FrugalPilot.pro.monthly"
-            ]
-        case .proYearly:
-            return [
-                "ahhweii.frugalpilot.pro.yearly",
-                "ahhweii.Frugal-Pilot.pro.yearly",
-                "ahhweii.FrugalPilot.pro.yearly"
-            ]
-        case .lifetime:
-            return [
-                "ahhweii.frugalpilot.lifetime",
-                "ahhweii.Frugal-Pilot.lifetime",
-                "ahhweii.FrugalPilot.lifetime"
-            ]
-        }
+        productIDsByPlan[plan] ?? []
     }
 
     static func plan(for storeProductID: String) -> SubscriptionPlan? {
-        SubscriptionPlan.allCases.first { plan in
-            productIDs(for: plan).contains(storeProductID)
+        productIDToPlan[storeProductID]
+    }
+
+    static func refreshPlanFromStoreKit() async -> SubscriptionPlan {
+        var highestPlan: SubscriptionPlan = .free
+        for await entitlement in StoreKit.Transaction.currentEntitlements {
+            guard case .verified(let transaction) = entitlement else { continue }
+            guard let plan = plan(for: transaction.productID) else { continue }
+            if planPriority(plan) > planPriority(highestPlan) {
+                highestPlan = plan
+            }
+        }
+        setPlan(highestPlan)
+        return highestPlan
+    }
+
+    static func startTransactionUpdatesListener() {
+        guard updatesListenerTask == nil else { return }
+        updatesListenerTask = Task.detached(priority: .background) {
+            // Ensure state is accurate at startup before waiting for incoming updates.
+            _ = await refreshPlanFromStoreKit()
+
+            for await update in StoreKit.Transaction.updates {
+                guard case .verified(let transaction) = update else { continue }
+                _ = await refreshPlanFromStoreKit()
+                await transaction.finish()
+            }
         }
     }
 
-    static var planCatalog: [SubscriptionPlanDescriptor] {
-        [
-            SubscriptionPlanDescriptor(plan: .proLiteMonthly,
-                                       title: "Pro Lite Monthly",
-                                       subtitle: "Unlimited accounts and transactions",
-                                       priority: 1),
-            SubscriptionPlanDescriptor(plan: .proLiteYearly,
-                                       title: "Pro Lite Yearly",
-                                       subtitle: "Unlimited accounts and transactions",
-                                       priority: 2),
-            SubscriptionPlanDescriptor(plan: .proMonthly,
-                                       title: "Pro Monthly",
-                                       subtitle: "Face ID unlock and premium features",
-                                       priority: 3),
-            SubscriptionPlanDescriptor(plan: .proYearly,
-                                       title: "Pro Yearly",
-                                       subtitle: "Face ID unlock and premium features",
-                                       priority: 4),
-            SubscriptionPlanDescriptor(plan: .lifetime,
-                                       title: "Lifetime",
-                                       subtitle: "All premium features forever",
-                                       priority: 5)
-        ]
+    private static func planPriority(_ plan: SubscriptionPlan) -> Int {
+        planPriorityByPlan[plan] ?? 0
     }
+
 }

@@ -15,9 +15,11 @@ final class StoreSubscriptionStore: ObservableObject {
     @Published private(set) var isLoading: Bool = false
     @Published private(set) var isPurchasing: Bool = false
     @Published var statusMessage: String? = nil
-    @Published private(set) var missingProductIDs: [String] = []
 
     private var didLoadProducts: Bool = false
+    private var productsByID: [String: Product] {
+        Dictionary(uniqueKeysWithValues: products.map { ($0.id, $0) })
+    }
 
     func prepareIfNeeded() async {
         guard didLoadProducts == false else { return }
@@ -30,19 +32,20 @@ final class StoreSubscriptionStore: ObservableObject {
         isLoading = true
         defer { isLoading = false }
 
-        let ids = SubscriptionPlan.allCases
-            .flatMap { SubscriptionManager.productIDs(for: $0) }
+        let ids = Array(Set(SubscriptionPlan.allCases
+            .flatMap { SubscriptionManager.productIDs(for: $0) }))
         do {
             let loaded = try await Product.products(for: ids)
             products = loaded.sorted { lhs, rhs in
                 lhs.price < rhs.price
             }
-            let loadedIDs = Set(loaded.map(\.id))
-            missingProductIDs = ids.filter { !loadedIDs.contains($0) }
+            let unavailablePlans = SubscriptionManager.planCatalog
+                .map(\.plan)
+                .filter { product(for: $0) == nil }
             if loaded.isEmpty {
-                statusMessage = "No App Store products were returned. Check product IDs in App Store Connect."
-            } else if !missingProductIDs.isEmpty {
-                statusMessage = "Some plans are unavailable on this build. Missing IDs: \(missingProductIDs.joined(separator: ", "))"
+                statusMessage = "No App Store products were returned. Please try again later."
+            } else if !unavailablePlans.isEmpty {
+                statusMessage = "Some plans are currently unavailable. Please try again later."
             }
             didLoadProducts = true
         } catch {
@@ -51,14 +54,21 @@ final class StoreSubscriptionStore: ObservableObject {
     }
 
     func product(for plan: SubscriptionPlan) -> Product? {
-        let ids = Set(SubscriptionManager.productIDs(for: plan))
-        guard !ids.isEmpty else { return nil }
-        return products.first(where: { ids.contains($0.id) })
+        for productID in SubscriptionManager.productIDs(for: plan) {
+            if let product = productsByID[productID] {
+                return product
+            }
+        }
+        return nil
     }
 
     func purchase(plan: SubscriptionPlan) async {
+        if products.isEmpty || !didLoadProducts {
+            await loadProducts()
+        }
+
         guard let product = product(for: plan) else {
-            statusMessage = "This plan is not available yet in App Store Connect."
+            statusMessage = "This plan is not available for purchase right now."
             return
         }
         guard !isPurchasing else { return }
@@ -69,17 +79,41 @@ final class StoreSubscriptionStore: ObservableObject {
             let result = try await product.purchase()
             switch result {
             case .success(let verification):
-                guard case .verified(let transaction) = verification else {
-                    statusMessage = "Purchase could not be verified."
+                switch verification {
+                case .verified(let transaction):
+                    _ = await SubscriptionManager.refreshPlanFromStoreKit()
+                    await transaction.finish()
+                    statusMessage = "Purchase successful."
+                case .unverified(_, let verificationError):
+                    let nsError = verificationError as NSError
+                    statusMessage = "Purchase could not be verified (\(nsError.domain) \(nsError.code))."
+                }
+            case .userCancelled:
+                let planBefore = SubscriptionManager.currentPlan
+                // Some environments briefly return `userCancelled` while entitlement updates are still propagating.
+                try? await Task.sleep(nanoseconds: 1_200_000_000)
+                var planAfter = await SubscriptionManager.refreshPlanFromStoreKit()
+                if planAfter != planBefore {
+                    statusMessage = "Purchase successful."
                     return
                 }
-                apply(storeTransaction: transaction)
-                await transaction.finish()
-                statusMessage = "Purchase successful."
-            case .userCancelled, .pending:
-                break
+
+                // Secondary recovery: request App Store sync, then re-check entitlements.
+                do {
+                    try await AppStore.sync()
+                    planAfter = await SubscriptionManager.refreshPlanFromStoreKit()
+                    if planAfter != planBefore {
+                        statusMessage = "Purchase successful."
+                    } else {
+                        statusMessage = "Purchase was not completed."
+                    }
+                } catch {
+                    statusMessage = "Purchase was not completed."
+                }
+            case .pending:
+                statusMessage = "Purchase is pending approval."
             @unknown default:
-                break
+                statusMessage = "Purchase could not be completed."
             }
         } catch {
             statusMessage = "Purchase failed. Please try again."
@@ -97,23 +131,6 @@ final class StoreSubscriptionStore: ObservableObject {
     }
 
     func refreshEntitlements() async {
-        var highestPlan: SubscriptionPlan = .free
-        for await entitlement in StoreKit.Transaction.currentEntitlements {
-            guard case .verified(let transaction) = entitlement else { continue }
-            guard let plan = SubscriptionManager.plan(for: transaction.productID) else { continue }
-            if planPriority(plan) > planPriority(highestPlan) {
-                highestPlan = plan
-            }
-        }
-        SubscriptionManager.setPlan(highestPlan)
-    }
-
-    private func apply(storeTransaction: StoreKit.Transaction) {
-        guard let plan = SubscriptionManager.plan(for: storeTransaction.productID) else { return }
-        SubscriptionManager.setPlan(plan)
-    }
-
-    private func planPriority(_ plan: SubscriptionPlan) -> Int {
-        SubscriptionManager.planCatalog.first(where: { $0.plan == plan })?.priority ?? 0
+        _ = await SubscriptionManager.refreshPlanFromStoreKit()
     }
 }

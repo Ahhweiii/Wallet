@@ -14,6 +14,7 @@ final class DashboardViewModel: ObservableObject {
     private let modelContext: ModelContext
     private typealias PeriodTotals = (expense: Decimal, income: Decimal)
     private var periodTotalsCache: [String: PeriodTotals] = [:]
+    private var accountsByID: [UUID: Account] = [:]
     private static let billingStartFormatter: DateFormatter = {
         let df = DateFormatter()
         df.dateFormat = "d MMM"
@@ -24,6 +25,15 @@ final class DashboardViewModel: ObservableObject {
         df.dateFormat = "d MMM yyyy"
         return df
     }()
+    private static let hintAmountRegex = try? NSRegularExpression(
+        pattern: #"(?i)(?:s\$|\$)?\s*([0-9]+(?:\.[0-9]{1,2})?)"#
+    )
+    private static let hintDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        return formatter
+    }()
+    private static let hintDateFormats = ["d/M/yyyy", "d/M/yy", "yyyy-MM-dd", "d MMM yyyy"]
 
     @Published var accounts: [Account] = []
     @Published var transactions: [Transaction] = []
@@ -198,7 +208,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     private func periodTotals(for accountId: UUID, monthOffset: Int) -> PeriodTotals {
-        guard let account = accounts.first(where: { $0.id == accountId }) else { return (.zero, .zero) }
+        guard let account = account(for: accountId) else { return (.zero, .zero) }
         let cacheKey = periodCacheKey(accountId: accountId, monthOffset: monthOffset)
         if let cached = periodTotalsCache[cacheKey] {
             return cached
@@ -257,7 +267,8 @@ final class DashboardViewModel: ObservableObject {
         invalidateComputedCaches()
         fetchAccounts()
         fetchTransactions()
-        if applyDueFixedPaymentsIfNeeded() {
+        let didApplyFixed = applyDueFixedPaymentsIfNeeded()
+        if didApplyFixed {
             invalidateComputedCaches()
             fetchAccounts()
             fetchTransactions()
@@ -277,9 +288,10 @@ final class DashboardViewModel: ObservableObject {
             }
             if didNormalize { save() }
             accounts = allAccounts.filter { Self.normalizedProfileName($0.profileName) == activeProfileName }
+            accountsByID = Dictionary(uniqueKeysWithValues: accounts.map { ($0.id, $0) })
         } catch {
-            print("fetchAccounts error:", error)
             accounts = []
+            accountsByID = [:]
         }
         invalidateComputedCaches()
     }
@@ -299,7 +311,6 @@ final class DashboardViewModel: ObservableObject {
             }
             if didUpdate { save() }
         } catch {
-            print("fetchTransactions error:", error)
             transactions = []
         }
         invalidateComputedCaches()
@@ -312,6 +323,8 @@ final class DashboardViewModel: ObservableObject {
     }
 
     private func applyDueFixedPaymentsIfNeeded() -> Bool {
+        var didMutate = false
+
         let cal = Calendar.current
         let now = Date()
         let year = cal.component(.year, from: now)
@@ -337,7 +350,6 @@ final class DashboardViewModel: ObservableObject {
                 }
                 .map { fixedPaymentTxnKey(accountId: $0.accountId, amount: $0.amount, date: $0.date, note: $0.note) }
         )
-        var didMutate = false
         var fixedToDeleteIds = Set<UUID>()
         var fixedToDelete: [FixedPayment] = []
 
@@ -683,7 +695,7 @@ final class DashboardViewModel: ObservableObject {
         )
         modelContext.insert(txn)
 
-        if let account = accounts.first(where: { $0.id == accountId }), account.type == .cash {
+        if let account = account(for: accountId), account.type == .cash {
             switch type {
             case .expense: account.amount -= amount
             case .income:  account.amount += amount
@@ -782,23 +794,18 @@ final class DashboardViewModel: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return (nil, nil) }
 
-        let amountPattern = #"(?i)(?:s\$|\$)?\s*([0-9]+(?:\.[0-9]{1,2})?)"#
-        let amountRegex = try? NSRegularExpression(pattern: amountPattern)
         let range = NSRange(trimmed.startIndex..<trimmed.endIndex, in: trimmed)
         var amount: Decimal? = nil
-        if let match = amountRegex?.firstMatch(in: trimmed, range: range),
+        if let match = Self.hintAmountRegex?.firstMatch(in: trimmed, range: range),
            match.numberOfRanges > 1,
            let valueRange = Range(match.range(at: 1), in: trimmed) {
             amount = Decimal(string: String(trimmed[valueRange]))
         }
 
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "en_US_POSIX")
-        let formats = ["d/M/yyyy", "d/M/yy", "yyyy-MM-dd", "d MMM yyyy"]
         var parsedDate: Date? = nil
-        for format in formats where parsedDate == nil {
-            formatter.dateFormat = format
-            parsedDate = formatter.date(from: trimmed)
+        for format in Self.hintDateFormats where parsedDate == nil {
+            Self.hintDateFormatter.dateFormat = format
+            parsedDate = Self.hintDateFormatter.date(from: trimmed)
         }
 
         return (amount, parsedDate)
@@ -811,12 +818,12 @@ final class DashboardViewModel: ObservableObject {
                        note: String) -> Bool {
         guard amount > 0 else { return false }
         guard canAddTransaction(on: date) else { return false }
-        guard let cashAccount = accounts.first(where: { $0.id == cashAccountId && $0.type == .cash }) else { return false }
-        guard accounts.contains(where: { $0.id == creditAccountId && $0.type == .credit }) else { return false }
+        guard let cashAccount = account(for: cashAccountId), cashAccount.type == .cash else { return false }
+        guard let creditAccount = account(for: creditAccountId), creditAccount.type == .credit else { return false }
         guard cashAccount.amount >= amount else { return false }
 
-        let cashName = accounts.first(where: { $0.id == cashAccountId })?.displayName ?? "Cash"
-        let creditName = accounts.first(where: { $0.id == creditAccountId })?.displayName ?? "Credit Card"
+        let cashName = cashAccount.displayName
+        let creditName = creditAccount.displayName
 
         let outNote = note.isEmpty ? "To \(creditName)" : "To \(creditName) • \(note)"
         let cashSide = Transaction(
@@ -857,8 +864,8 @@ final class DashboardViewModel: ObservableObject {
         guard amount > 0 else { return false }
         guard fromAccountId != toAccountId else { return false }
         guard canAddTransaction(on: date) else { return false }
-        guard let from = accounts.first(where: { $0.id == fromAccountId }) else { return false }
-        guard let to = accounts.first(where: { $0.id == toAccountId }) else { return false }
+        guard let from = account(for: fromAccountId) else { return false }
+        guard let to = account(for: toAccountId) else { return false }
 
         if from.type == .cash, from.amount < amount {
             return false
@@ -917,7 +924,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func deleteTransaction(_ txn: Transaction) {
-        if let account = accounts.first(where: { $0.id == txn.accountId }), account.type == .cash {
+        if let account = account(for: txn.accountId), account.type == .cash {
             switch txn.type {
             case .expense: account.amount += txn.amount
             case .income:  account.amount -= txn.amount
@@ -951,7 +958,7 @@ final class DashboardViewModel: ObservableObject {
         let oldAccountId = txn.accountId
         let oldCategoryName = txn.categoryName
 
-        if let oldAccount = accounts.first(where: { $0.id == oldAccountId }), oldAccount.type == .cash {
+        if let oldAccount = account(for: oldAccountId), oldAccount.type == .cash {
             switch oldType {
             case .expense:
                 oldAccount.amount += oldAmount
@@ -974,7 +981,7 @@ final class DashboardViewModel: ObservableObject {
         txn.date = date
         txn.note = note
 
-        if let newAccount = accounts.first(where: { $0.id == accountId }), newAccount.type == .cash {
+        if let newAccount = account(for: accountId), newAccount.type == .cash {
             switch type {
             case .expense:
                 newAccount.amount -= amount
@@ -1004,9 +1011,12 @@ final class DashboardViewModel: ObservableObject {
         let cal = Calendar.current
         guard let monthStart = cal.date(from: cal.dateComponents([.year, .month], from: date)) else { return 0 }
         guard let nextMonth = cal.date(byAdding: .month, value: 1, to: monthStart) else { return 0 }
-        let monthEnd = nextMonth.addingTimeInterval(-1)
-        let allTransactions = (try? modelContext.fetch(FetchDescriptor<Transaction>())) ?? transactions
-        return allTransactions.filter { $0.date >= monthStart && $0.date <= monthEnd }.count
+        let descriptor = FetchDescriptor<Transaction>(
+            predicate: #Predicate<Transaction> { txn in
+                txn.date >= monthStart && txn.date < nextMonth
+            }
+        )
+        return (try? modelContext.fetchCount(descriptor)) ?? 0
     }
 
     func totalSpent(for accountId: UUID) -> Decimal {
@@ -1016,7 +1026,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func creditPoolAccountIds(for accountId: UUID) -> [UUID] {
-        guard let acct = accounts.first(where: { $0.id == accountId }) else { return [accountId] }
+        guard let acct = account(for: accountId) else { return [accountId] }
         guard acct.type == .credit, acct.isInCombinedCreditPool else { return [acct.id] }
 
         let key = bankKey(acct.bankName)
@@ -1029,7 +1039,7 @@ final class DashboardViewModel: ObservableObject {
     }
 
     func sharedAvailableCredit(for accountId: UUID) -> Decimal {
-        guard let acct = accounts.first(where: { $0.id == accountId }) else { return 0 }
+        guard let acct = account(for: accountId) else { return 0 }
         guard acct.type == .credit else { return 0 }
 
         let ids = Set(creditPoolAccountIds(for: accountId))
@@ -1125,6 +1135,8 @@ final class DashboardViewModel: ObservableObject {
             guard let normalizedProfileLower else { return true }
             return reminder.profileName.lowercased() == normalizedProfileLower
         }
+        let spendingThresholds = AccountSpendingAlertStore.exportThresholdsRaw(filteredTo: accountIds)
+        let settingsSnapshot = AccountSettingsStore.currentSnapshot()
 
         return try FrugalPilotBackupService.exportJSON(accounts: filteredAccounts,
                                                  transactions: filteredTransactions,
@@ -1133,7 +1145,9 @@ final class DashboardViewModel: ObservableObject {
                                                  autoCategoryRules: rules,
                                                  budgets: budgets,
                                                  savingsGoals: goals,
-                                                 billReminders: reminders)
+                                                 billReminders: reminders,
+                                                 spendingAlertThresholds: spendingThresholds,
+                                                 appSettings: settingsSnapshot)
     }
 
     func importBackupJSON(data: Data, strategy: FrugalPilotImportStrategy) throws -> FrugalPilotImportResult {
@@ -1151,6 +1165,11 @@ final class DashboardViewModel: ObservableObject {
 
     private func save() {
         do { try modelContext.save() }
-        catch { print("save error:", error) }
+        catch { }
     }
+
+    private func account(for id: UUID) -> Account? {
+        accountsByID[id]
+    }
+
 }

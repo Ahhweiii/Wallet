@@ -23,6 +23,8 @@ struct FrugalPilotImportResult {
     let budgetCount: Int
     let savingsGoalCount: Int
     let billReminderCount: Int
+    let spendingAlertThresholdCount: Int
+    let restoredAppSettings: Bool
 }
 
 enum FrugalPilotBackupError: Error, LocalizedError {
@@ -50,11 +52,15 @@ enum FrugalPilotBackupService {
                            autoCategoryRules: [AutoCategoryRuleData]? = nil,
                            budgets: [BudgetEnvelopeData]? = nil,
                            savingsGoals: [SavingsGoalData]? = nil,
-                           billReminders: [BillReminderData]? = nil) throws -> Data {
+                           billReminders: [BillReminderData]? = nil,
+                           spendingAlertThresholds: [String: String]? = nil,
+                           appSettings: AccountSettingsSnapshot? = nil) throws -> Data {
         let resolvedRules = autoCategoryRules ?? SmartDataStore.loadRules()
         let resolvedBudgets = budgets ?? SmartDataStore.loadBudgets()
         let resolvedGoals = savingsGoals ?? SmartDataStore.loadGoals()
         let resolvedReminders = billReminders ?? SmartDataStore.loadReminders()
+        let resolvedThresholds = spendingAlertThresholds ?? AccountSpendingAlertStore.exportThresholdsRaw()
+        let resolvedAppSettings = appSettings ?? AccountSettingsStore.currentSnapshot()
 
         let file = FrugalPilotBackupFile(
             accounts: accounts.map(AccountDTO.init(from:)),
@@ -64,7 +70,9 @@ enum FrugalPilotBackupService {
             autoCategoryRules: resolvedRules,
             budgets: resolvedBudgets,
             savingsGoals: resolvedGoals,
-            billReminders: resolvedReminders
+            billReminders: resolvedReminders,
+            spendingAlertThresholds: resolvedThresholds,
+            appSettings: resolvedAppSettings
         )
 
         let encoder = JSONEncoder()
@@ -90,6 +98,11 @@ enum FrugalPilotBackupService {
                         strategy: FrugalPilotImportStrategy) throws -> FrugalPilotImportResult {
         if case .replaceAll = strategy {
             try deleteAll(modelContext: modelContext)
+            SmartDataStore.saveRules([])
+            SmartDataStore.saveBudgets([])
+            SmartDataStore.saveGoals([])
+            SmartDataStore.saveReminders([])
+            AccountSpendingAlertStore.clearAll()
         }
 
         let existingAccounts = try modelContext.fetch(FetchDescriptor<Account>())
@@ -230,6 +243,19 @@ enum FrugalPilotBackupService {
         if let reminders = file.billReminders {
             SmartDataStore.saveReminders(reminders)
         }
+        if let thresholds = file.spendingAlertThresholds {
+            let shouldMergeThresholds: Bool
+            switch strategy {
+            case .merge:
+                shouldMergeThresholds = true
+            case .replaceAll:
+                shouldMergeThresholds = false
+            }
+            AccountSpendingAlertStore.importThresholdsRaw(thresholds, merge: shouldMergeThresholds)
+        }
+        if let settings = file.appSettings {
+            AccountSettingsStore.apply(settings)
+        }
 
         try modelContext.save()
 
@@ -242,7 +268,9 @@ enum FrugalPilotBackupService {
             autoCategoryRuleCount: file.autoCategoryRules?.count ?? 0,
             budgetCount: file.budgets?.count ?? 0,
             savingsGoalCount: file.savingsGoals?.count ?? 0,
-            billReminderCount: file.billReminders?.count ?? 0
+            billReminderCount: file.billReminders?.count ?? 0,
+            spendingAlertThresholdCount: file.spendingAlertThresholds?.count ?? 0,
+            restoredAppSettings: file.appSettings != nil
         )
     }
 
