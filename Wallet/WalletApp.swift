@@ -12,6 +12,7 @@ import SwiftData
 struct FrugalPilotApp: App {
     @State private var container: ModelContainer?
     private static let cloudSyncActiveKey = "cloud_sync_active"
+    private static let cloudSyncLastErrorKey = "cloud_sync_last_error"
     private static let containerInitLogKey = "container_init_log"
 
     var body: some Scene {
@@ -52,14 +53,17 @@ struct FrugalPilotApp: App {
 
     private static func makeContainerWithRecovery(preferCloudSync: Bool) -> ModelContainer {
         clearContainerInitLog()
+        UserDefaults.standard.removeObject(forKey: cloudSyncLastErrorKey)
 
         if preferCloudSync {
             do {
                 let cloud = try makeContainer(useCloudKit: true)
                 UserDefaults.standard.set(true, forKey: cloudSyncActiveKey)
+                UserDefaults.standard.removeObject(forKey: cloudSyncLastErrorKey)
                 appendContainerLog("SUCCESS cloud container")
                 return cloud
             } catch {
+                UserDefaults.standard.set(String(describing: error), forKey: cloudSyncLastErrorKey)
                 appendContainerLog("FAIL cloud container: \(String(describing: error))")
             }
         } else {

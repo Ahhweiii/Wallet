@@ -7,6 +7,10 @@
 
 import Foundation
 
+extension Notification.Name {
+    static let quickAddDraftUpdated = Notification.Name("quickAddDraftUpdated")
+}
+
 struct TransactionQuickAddDraft: Codable {
     var typeRaw: String
     var amount: Decimal?
@@ -46,6 +50,7 @@ enum TransactionQuickAddDraftStore {
     static func savePending(_ draft: TransactionQuickAddDraft) {
         guard let data = try? encoder.encode(draft) else { return }
         UserDefaults.standard.set(data, forKey: pendingDraftKey)
+        NotificationCenter.default.post(name: .quickAddDraftUpdated, object: nil)
     }
 
     static func consumePending() -> TransactionQuickAddDraft? {

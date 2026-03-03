@@ -48,19 +48,31 @@ struct QuickAddTransactionIntent: AppIntent {
             return noteText
         }()
 
-        let decimalAmount: Decimal? = amount.map { Decimal($0) }
-        await MainActor.run {
-            let draft = TransactionQuickAddDraft(
-                typeRaw: type.rawValue.capitalized,
-                amount: decimalAmount,
-                note: composedNote,
-                date: date,
-                categoryName: nil
-            )
-            TransactionQuickAddDraftStore.savePending(draft)
+        var components = URLComponents()
+        components.scheme = "frugalpilot"
+        components.host = "add-transaction"
+        var queryItems: [URLQueryItem] = [
+            URLQueryItem(name: "type", value: type.rawValue.capitalized)
+        ]
+        if let amount {
+            queryItems.append(URLQueryItem(name: "amount", value: String(amount)))
+        }
+        if !composedNote.isEmpty {
+            queryItems.append(URLQueryItem(name: "note", value: composedNote))
+        }
+        if let date {
+            queryItems.append(URLQueryItem(name: "date", value: ISO8601DateFormatter().string(from: date)))
+        }
+        components.queryItems = queryItems
+
+        guard let url = components.url else {
+            return .result(dialog: "Could not open FrugalPilot quick add.")
         }
 
-        return .result(dialog: "Draft prepared. Review and save it in FrugalPilot.")
+        return .result(
+            opensIntent: OpenURLIntent(url),
+            dialog: "Opening FrugalPilot with a prefilled transaction draft."
+        )
     }
 }
 

@@ -18,6 +18,7 @@ struct ProfileOverviewScreen: View {
     @AppStorage("category_preset") private var categoryPresetRaw: String = CategoryPreset.singapore.rawValue
     @AppStorage("tracking_current_profile") private var currentProfileRaw: String = "Personal"
     @AppStorage("cloud_sync_active") private var cloudSyncActive: Bool = false
+    @AppStorage("cloud_sync_last_error") private var cloudSyncLastError: String = ""
     @AppStorage(SubscriptionManager.planKey) private var planRaw: String = SubscriptionPlan.free.rawValue
 
     @Query(sort: [SortDescriptor(\Account.bankName), SortDescriptor(\Account.accountName)])
@@ -112,6 +113,9 @@ struct ProfileOverviewScreen: View {
 
                         sectionCard("Sync & Security") {
                             infoRow("iCloud Sync Active", cloudSyncActive ? "Yes" : "No")
+                            if !cloudSyncActive, !cloudSyncLastError.isEmpty {
+                                infoRow("iCloud Last Error", cloudSyncLastError)
+                            }
                             infoRow("Face ID Unlock", appLockEnabled ? "Enabled" : "Disabled")
                             infoRow("Dark Mode", themeIsDark ? "On" : "Off")
                             infoRow("Category Preset", categoryPresetRaw)

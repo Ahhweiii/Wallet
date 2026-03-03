@@ -338,6 +338,9 @@ struct DashboardScreen: View {
                 guard phase == .active else { return }
                 consumePendingQuickAddDraftIfNeeded()
             }
+            .onReceive(NotificationCenter.default.publisher(for: .quickAddDraftUpdated)) { _ in
+                consumePendingQuickAddDraftIfNeeded()
+            }
     }
 
     private var mainStack: some View {
@@ -1023,7 +1026,7 @@ struct DashboardScreen: View {
                                                 .font(.custom("Avenir Next", size: 13).weight(.semibold))
                                                 .foregroundStyle(theme.textPrimary)
                                                 .lineLimit(1)
-                                            Text(cloudSyncActive ? "iCloud sync is enabled on this build." : "iCloud sync is not active on this build profile.")
+                                            Text(cloudSyncActive ? "iCloud sync is active." : "iCloud sync is currently unavailable. Check Profile for the last sync error.")
                                                 .font(.custom("Avenir Next", size: 11))
                                                 .foregroundStyle(theme.textTertiary)
                                                 .lineLimit(2)

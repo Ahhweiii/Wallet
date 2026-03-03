@@ -403,10 +403,9 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 3J265QU72U;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+					GENERATE_INFOPLIST_FILE = NO;
+					INFOPLIST_FILE = FrugalPilot-Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = FrugalPilot;
-				INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLName = FrugalPilot;
-				INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLSchemes_0 = frugalpilot;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Allow camera access to scan receipt photos.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Use Face ID to unlock FrugalPilot.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Allow photo library access to import receipt photos.";
@@ -445,10 +444,9 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 3J265QU72U;
 				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+					GENERATE_INFOPLIST_FILE = NO;
+					INFOPLIST_FILE = FrugalPilot-Info.plist;
 				INFOPLIST_KEY_CFBundleDisplayName = FrugalPilot;
-				INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLName = FrugalPilot;
-				INFOPLIST_KEY_CFBundleURLTypes_0_CFBundleURLSchemes_0 = frugalpilot;
 				INFOPLIST_KEY_NSCameraUsageDescription = "Allow camera access to scan receipt photos.";
 				INFOPLIST_KEY_NSFaceIDUsageDescription = "Use Face ID to unlock FrugalPilot.";
 				INFOPLIST_KEY_NSPhotoLibraryUsageDescription = "Allow photo library access to import receipt photos.";
