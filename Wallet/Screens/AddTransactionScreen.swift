@@ -763,7 +763,7 @@ struct AddTransactionScreen: View {
                         return
                     }
 
-                    let observations = request.results as? [VNRecognizedTextObservation] ?? []
+                    let observations = (request.results ?? []).compactMap { $0 as? VNRecognizedTextObservation }
                     let text = observations
                         .compactMap { $0.topCandidates(1).first?.string.trimmingCharacters(in: .whitespacesAndNewlines) }
                         .filter { !$0.isEmpty }

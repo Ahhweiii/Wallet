@@ -9,15 +9,28 @@ import SwiftUI
 import SwiftData
 import Charts
 
-private enum StatisticsAutoMetric: String, CaseIterable, Identifiable {
+private enum StatisticsWidgetMetric: String, CaseIterable, Identifiable, Codable {
     case spendingByCategory = "Spending by Category"
     case monthlySpending = "Monthly Spending Trend"
     case incomeVsExpense = "Income vs Expense"
     case fixedPlanned = "Fixed Planned Per Month"
+    case netWorthTrend = "Estimated Net Worth Trend"
+    case topCategories = "Top Categories"
+    case instalment = "Instalment (Fixed Payments)"
+    case forecast = "Forecast (Next Month)"
+    case debtPayoff = "Debt Payoff (Using Instalment)"
     var id: String { rawValue }
 }
 
-private enum StatisticsPeriod: String, CaseIterable, Identifiable {
+private enum StatisticsChartStyle: String, CaseIterable, Identifiable, Codable {
+    case pie = "Pie"
+    case line = "Line"
+    case bar = "Bar"
+    case card = "Card"
+    var id: String { rawValue }
+}
+
+private enum StatisticsPeriod: String, CaseIterable, Identifiable, Codable {
     case threeMonths = "3 Months"
     case sixMonths = "6 Months"
     case twelveMonths = "12 Months"
@@ -31,18 +44,44 @@ private enum StatisticsPeriod: String, CaseIterable, Identifiable {
     }
 }
 
+private struct StatisticsWidgetConfig: Identifiable, Codable, Equatable {
+    let id: UUID
+    var metric: StatisticsWidgetMetric
+    var style: StatisticsChartStyle
+    var period: StatisticsPeriod
+
+    init(id: UUID = UUID(),
+         metric: StatisticsWidgetMetric,
+         style: StatisticsChartStyle,
+         period: StatisticsPeriod) {
+        self.id = id
+        self.metric = metric
+        self.style = style
+        self.period = period
+    }
+
+    static let defaults: [StatisticsWidgetConfig] = []
+}
+
 struct StatisticsScreen: View {
     @Environment(\.appTheme) private var theme
     @AppStorage("tracking_current_profile") private var currentProfileRaw: String = "Personal"
+    @AppStorage("statistics_widgets_v1") private var widgetsRaw: String = ""
+    @AppStorage("statistics_debt_repayment_monthly_v1") private var debtRepaymentMonthlyRaw: String = ""
     @Query(sort: [SortDescriptor(\Transaction.date, order: .reverse)])
     private var allTransactions: [Transaction]
     @Query(sort: [SortDescriptor(\FixedPayment.startDate)])
     private var allFixedPayments: [FixedPayment]
     @Query(sort: [SortDescriptor(\Account.bankName), SortDescriptor(\Account.accountName)])
     private var allAccounts: [Account]
-    @State private var selectedAutoMetric: StatisticsAutoMetric = .monthlySpending
-    @State private var selectedPeriod: StatisticsPeriod = .sixMonths
-    @State private var debtMonthlyPaymentText: String = "500"
+    @State private var widgets: [StatisticsWidgetConfig] = []
+    @State private var didLoadWidgets: Bool = false
+    @State private var showAddWidgetSheet = false
+    @State private var showDebtRepaymentSheet = false
+    @State private var draftMetric: StatisticsWidgetMetric = .spendingByCategory
+    @State private var draftStyle: StatisticsChartStyle = .pie
+    @State private var draftPeriod: StatisticsPeriod = .sixMonths
+    @State private var debtRepaymentInputText: String = ""
 
     private var currentProfileName: String {
         let trimmed = currentProfileRaw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -67,32 +106,30 @@ struct StatisticsScreen: View {
         }
     }
 
-    private var expenseByCategory: [(String, Decimal)] {
-        expenseByCategory(monthCount: 6)
-    }
-
-    private var monthlySeries: [(Date, Decimal, Decimal)] {
-        transactionMonthlySeries(monthCount: 6)
-    }
-
-    private var topCategories: [(String, Decimal)] {
-        Array(expenseByCategory.prefix(5))
-    }
-
-    private var fixedPlannedSeries: [(Date, Decimal)] {
-        fixedPlannedSeries(monthCount: 6)
+    private var instalmentPayments: [FixedPayment] {
+        fixedPayments.filter { $0.type == .installment }
     }
 
     private var currentMonthPlannedTotal: Decimal {
         fixedPlannedSeries(monthCount: 1).first?.1 ?? .zero
     }
 
-    private var nextMonthForecast: Decimal {
-        forecastNetForNextMonth()
+    private var totalInstalmentPrincipal: Decimal {
+        instalmentPayments.reduce(.zero) { partial, payment in
+            partial + installmentPrincipal(for: payment)
+        }
     }
 
-    private var netWorthSeries: [(Date, Decimal)] {
-        estimatedNetWorthSeries(monthCount: 6)
+    private var monthlyRepaymentInput: Decimal {
+        let normalized = debtRepaymentMonthlyRaw
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: ",", with: "")
+        guard let value = Decimal(string: normalized), value > 0 else { return .zero }
+        return value
+    }
+
+    private var nextMonthForecast: Decimal {
+        forecastNetForNextMonth()
     }
 
     var body: some View {
@@ -112,141 +149,26 @@ struct StatisticsScreen: View {
                     .padding(.horizontal, 18)
                     .padding(.top, 6)
 
-                    sectionHeader("Overview")
-                    totalAmountCard
-                    forecastCard
-                    debtPlannerCard
-
-                    sectionHeader("Visual Insights")
-
-                    chartCard(title: "Auto Generate",
-                              subtitle: "Choose a chart type and time range. Values are based on the selected profile.") {
-                        customChartControls
-                    }
-
-                    chartCard(title: "Spending by Category",
-                              subtitle: "Pie chart showing how your expense total is split across categories in the last 6 months.") {
-                        if expenseByCategory.isEmpty {
-                            emptyState
-                        } else {
-                            Chart {
-                                ForEach(expenseByCategory, id: \.0) { item in
-                                    SectorMark(
-                                        angle: .value("Amount", item.1)
-                                    )
-                                    .foregroundStyle(by: .value("Category", item.0))
-                                }
-                            }
-                            .chartLegend(.hidden)
-                            .frame(height: 180)
-                        }
-                    }
-
-                    chartCard(title: "Monthly Spending Trend",
-                              subtitle: "Line chart of monthly expenses. X-axis is month, Y-axis is total amount spent.") {
-                        if monthlySeries.isEmpty {
-                            emptyState
-                        } else {
-                            Chart {
-                                ForEach(monthlySeries, id: \.0) { row in
-                                    LineMark(
-                                        x: .value("Month", row.0, unit: .month),
-                                        y: .value("Spent", (row.1 as NSDecimalNumber).doubleValue)
-                                    )
-                                    .foregroundStyle(theme.negative)
-                                }
-                            }
-                            .chartXAxis {
-                                AxisMarks(values: .automatic(desiredCount: 6))
-                            }
-                            .frame(height: 160)
-                        }
-                    }
-
-                    chartCard(title: "Income vs Expense",
-                              subtitle: "Bar chart comparing income and expense totals month by month.") {
-                        if monthlySeries.isEmpty {
-                            emptyState
-                        } else {
-                            Chart {
-                                ForEach(monthlySeries, id: \.0) { row in
-                                    BarMark(
-                                        x: .value("Month", row.0, unit: .month),
-                                        y: .value("Income", (row.2 as NSDecimalNumber).doubleValue)
-                                    )
-                                    .foregroundStyle(theme.positive)
-                                    BarMark(
-                                        x: .value("Month", row.0, unit: .month),
-                                        y: .value("Expense", (row.1 as NSDecimalNumber).doubleValue)
-                                    )
-                                    .foregroundStyle(theme.negative)
-                                }
-                            }
-                            .chartXAxis {
-                                AxisMarks(values: .automatic(desiredCount: 6))
-                            }
-                            .frame(height: 160)
-                        }
-                    }
-
-                    chartCard(title: "Fixed Planned Per Month",
-                              subtitle: "Planned fixed-payment total for each upcoming month.") {
-                        if fixedPlannedSeries.allSatisfy({ $0.1 == .zero }) {
-                            emptyState
-                        } else {
-                            Chart {
-                                ForEach(fixedPlannedSeries, id: \.0) { row in
-                                    BarMark(
-                                        x: .value("Month", row.0, unit: .month),
-                                        y: .value("Planned", (row.1 as NSDecimalNumber).doubleValue)
-                                    )
+                    sectionHeader("Statistics Widgets")
+                    chartCard(title: "Chart Widgets",
+                              subtitle: "Add only what you want to see. Pick metric first, then chart/card format.") {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Button {
+                                showAddWidgetSheet = true
+                            } label: {
+                                Label("Add Widget", systemImage: "plus.circle.fill")
+                                    .font(.custom("Avenir Next", size: 13).weight(.semibold))
                                     .foregroundStyle(theme.accent)
-                                }
                             }
-                            .chartXAxis {
-                                AxisMarks(values: .automatic(desiredCount: 6))
-                            }
-                            .frame(height: 160)
-                        }
-                    }
+                            .buttonStyle(.plain)
 
-                    chartCard(title: "Estimated Net Worth Trend",
-                              subtitle: "Running net value from income minus expense over time. Upward means improving balance.") {
-                        if netWorthSeries.isEmpty {
-                            emptyState
-                        } else {
-                            Chart {
-                                ForEach(netWorthSeries, id: \.0) { row in
-                                    LineMark(
-                                        x: .value("Month", row.0, unit: .month),
-                                        y: .value("Net Worth", (row.1 as NSDecimalNumber).doubleValue)
-                                    )
-                                    .foregroundStyle(theme.accent)
+                            if widgets.isEmpty {
+                                emptyState
+                            } else {
+                                ForEach(widgets) { widget in
+                                    statisticsWidgetCard(widget)
                                 }
                             }
-                            .chartXAxis {
-                                AxisMarks(values: .automatic(desiredCount: 6))
-                            }
-                            .frame(height: 170)
-                        }
-                    }
-
-                    chartCard(title: "Top Categories",
-                              subtitle: "Highest-spend categories ranked by total amount in the last 6 months.") {
-                        if topCategories.isEmpty {
-                            emptyState
-                        } else {
-                            Chart {
-                                ForEach(topCategories, id: \.0) { item in
-                                    BarMark(
-                                        x: .value("Amount", (item.1 as NSDecimalNumber).doubleValue),
-                                        y: .value("Category", item.0)
-                                    )
-                                    .foregroundStyle(theme.accent)
-                                }
-                            }
-                            .chartXAxis(.hidden)
-                            .frame(height: 160)
                         }
                     }
 
@@ -255,167 +177,197 @@ struct StatisticsScreen: View {
                 .padding(.bottom, 110)
             }
         }
-    }
-
-    private var totalAmountCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Total Amount (This Month)")
-                .font(.custom("Avenir Next", size: 13).weight(.semibold))
-                .foregroundStyle(theme.textSecondary)
-            Text(CurrencyFormatter.sgd(amount: currentMonthPlannedTotal))
-                .font(.custom("Avenir Next", size: 28).weight(.bold))
-                .foregroundStyle(theme.textPrimary)
-            Text("Planned fixed payments for this month")
-                .font(.custom("Avenir Next", size: 11))
-                .foregroundStyle(theme.textTertiary)
+        .onAppear {
+            guard !didLoadWidgets else { return }
+            didLoadWidgets = true
+            loadWidgets()
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(RoundedRectangle(cornerRadius: 14).fill(theme.card))
-        .padding(.horizontal, 18)
-    }
-
-    private var forecastCard: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Forecast (Next Month)")
-                .font(.custom("Avenir Next", size: 13).weight(.semibold))
-                .foregroundStyle(theme.textSecondary)
-            Text(CurrencyFormatter.sgd(amount: nextMonthForecast))
-                .font(.custom("Avenir Next", size: 24).weight(.bold))
-                .foregroundStyle(nextMonthForecast >= 0 ? theme.positive : theme.negative)
-            Text("Uses trailing 3-month average cashflow + planned fixed payments.")
-                .font(.custom("Avenir Next", size: 11))
-                .foregroundStyle(theme.textTertiary)
+        .sheet(isPresented: $showAddWidgetSheet) {
+            addWidgetSheet
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(RoundedRectangle(cornerRadius: 14).fill(theme.card))
-        .padding(.horizontal, 18)
+        .sheet(isPresented: $showDebtRepaymentSheet) {
+            debtRepaymentSheet
+        }
     }
 
-    private var debtPlannerCard: some View {
-        let payoffData = debtPayoffEstimate()
-        return VStack(alignment: .leading, spacing: 8) {
-            Text("Debt Payoff Planner")
-                .font(.custom("Avenir Next", size: 13).weight(.semibold))
-                .foregroundStyle(theme.textSecondary)
+    private var addWidgetSheet: some View {
+        NavigationStack {
+            Form {
+                Section("What would you like to see?") {
+                    Picker("Metric", selection: $draftMetric) {
+                        ForEach(StatisticsWidgetMetric.allCases) { metric in
+                            Text(metric.rawValue).tag(metric)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                }
 
+                Section("How should it be shown?") {
+                    Picker("Chart Type", selection: $draftStyle) {
+                        ForEach(allowedStyles(for: draftMetric), id: \.self) { style in
+                            Text(style.rawValue).tag(style)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                }
+
+                if supportsPeriod(for: draftMetric) {
+                    Section("Which period?") {
+                        Picker("Period", selection: $draftPeriod) {
+                            ForEach(StatisticsPeriod.allCases) { period in
+                                Text(period.rawValue).tag(period)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                    }
+                }
+            }
+            .onChange(of: draftMetric) { _, metric in
+                let allowed = allowedStyles(for: metric)
+                if !allowed.contains(draftStyle), let first = allowed.first {
+                    draftStyle = first
+                }
+                if !supportsPeriod(for: metric) {
+                    draftPeriod = .sixMonths
+                }
+            }
+            .navigationTitle("Add Widget")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { showAddWidgetSheet = false }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        addWidget()
+                        showAddWidgetSheet = false
+                    }
+                }
+            }
+        }
+    }
+
+    private func statisticsWidgetCard(_ widget: StatisticsWidgetConfig) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 8) {
-                Text("Monthly payment")
-                    .font(.custom("Avenir Next", size: 12).weight(.semibold))
-                    .foregroundStyle(theme.textSecondary)
-                TextField("0", text: $debtMonthlyPaymentText)
-                    .keyboardType(.decimalPad)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 10).fill(theme.surfaceAlt))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(widget.metric.rawValue)
+                        .font(.custom("Avenir Next", size: 14).weight(.semibold))
+                        .foregroundStyle(theme.textPrimary)
+                    Text(widgetSubtitle(for: widget))
+                        .font(.custom("Avenir Next", size: 11))
+                        .foregroundStyle(theme.textSecondary)
+                }
+                Spacer()
+                Button(role: .destructive) {
+                    removeWidget(widget.id)
+                } label: {
+                    Image(systemName: "trash")
+                        .foregroundStyle(theme.negative)
+                }
+                .buttonStyle(.plain)
             }
 
-            Text("Outstanding: \(CurrencyFormatter.sgd(amount: payoffData.totalDebt))")
-                .font(.custom("Avenir Next", size: 12))
-                .foregroundStyle(theme.textPrimary)
-            Text("Estimated months to clear: \(payoffData.months)")
-                .font(.custom("Avenir Next", size: 12).weight(.semibold))
-                .foregroundStyle(theme.textPrimary)
+            renderWidgetChart(widget)
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(14)
-        .background(RoundedRectangle(cornerRadius: 14).fill(theme.card))
-        .padding(.horizontal, 18)
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12).fill(theme.surface))
     }
 
-    private var customChartControls: some View {
-        let customMonthlySeries = transactionMonthlySeries(monthCount: selectedPeriod.monthCount)
-        let customCategorySeries = expenseByCategory(monthCount: selectedPeriod.monthCount)
-        let customFixedSeries = fixedPlannedSeries(monthCount: selectedPeriod.monthCount)
-
-        return VStack(alignment: .leading, spacing: 12) {
-            Picker("What to show", selection: $selectedAutoMetric) {
-                ForEach(StatisticsAutoMetric.allCases) { metric in
-                    Text(metric.rawValue).tag(metric)
+    @ViewBuilder
+    private func renderWidgetChart(_ widget: StatisticsWidgetConfig) -> some View {
+        switch widget.metric {
+        case .spendingByCategory:
+            let categories = expenseByCategory(monthCount: widget.period.monthCount)
+            categoryChart(categories, style: widget.style)
+        case .monthlySpending:
+            let series = transactionMonthlySeries(monthCount: widget.period.monthCount)
+            monthlySpendingChart(series, style: widget.style)
+        case .incomeVsExpense:
+            let series = transactionMonthlySeries(monthCount: widget.period.monthCount)
+            incomeExpenseChart(series, style: widget.style)
+        case .fixedPlanned:
+            let series = fixedPlannedSeries(monthCount: widget.period.monthCount)
+            fixedPlannedChart(series, style: widget.style)
+        case .netWorthTrend:
+            let series = estimatedNetWorthSeries(monthCount: widget.period.monthCount)
+            netWorthChart(series, style: widget.style)
+        case .topCategories:
+            let categories = Array(expenseByCategory(monthCount: widget.period.monthCount).prefix(5))
+            categoryChart(categories, style: widget.style == .line ? .bar : widget.style)
+        case .instalment:
+            infoWidgetCard(title: "Instalment",
+                           value: CurrencyFormatter.sgd(amount: currentMonthPlannedTotal),
+                           subtitle: "Value sourced from fixed payments for this month.")
+        case .forecast:
+            infoWidgetCard(title: "Forecast (Next Month)",
+                           value: CurrencyFormatter.sgd(amount: nextMonthForecast),
+                           subtitle: "Trailing 3-month average cashflow minus next month fixed payments.")
+        case .debtPayoff:
+            let payoffData = debtPayoffEstimate()
+            Button {
+                debtRepaymentInputText = debtRepaymentMonthlyRaw
+                showDebtRepaymentSheet = true
+            } label: {
+                VStack(alignment: .leading, spacing: 6) {
+                    infoWidgetCard(title: "Total Instalment Debt",
+                                   value: CurrencyFormatter.sgd(amount: payoffData.totalDebt),
+                                   subtitle: "Installment total derived from fixed payments.")
+                    infoWidgetCard(title: "Your Repayment / Month",
+                                   value: payoffData.monthlyRepayment > 0
+                                   ? CurrencyFormatter.sgd(amount: payoffData.monthlyRepayment)
+                                   : "Not Set",
+                                   subtitle: "Tap to set monthly repayment and calculate payoff months.")
+                    infoWidgetCard(title: "Estimated Months To Pay Off",
+                                   value: payoffData.months > 0 ? "\(payoffData.months)" : "-",
+                                   subtitle: "Ceiling(total installment debt / monthly repayment).")
                 }
             }
-            .pickerStyle(.menu)
+            .buttonStyle(.plain)
+        }
+    }
 
-            Picker("Period", selection: $selectedPeriod) {
-                ForEach(StatisticsPeriod.allCases) { period in
-                    Text(period.rawValue).tag(period)
+    private var debtRepaymentSheet: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 16) {
+                infoWidgetCard(title: "Total Instalment Debt",
+                               value: CurrencyFormatter.sgd(amount: totalInstalmentPrincipal),
+                               subtitle: "Sum of installment principal from Fixed Payments.")
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Repayment Per Month")
+                        .font(.custom("Avenir Next", size: 12).weight(.semibold))
+                        .foregroundStyle(theme.textSecondary)
+                    TextField("e.g. 300.00", text: $debtRepaymentInputText)
+                        .keyboardType(.decimalPad)
+                        .font(.custom("Avenir Next", size: 16))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 10)
+                        .background(RoundedRectangle(cornerRadius: 10).fill(theme.surfaceAlt))
+                    Text("Enter how much you plan to repay monthly.")
+                        .font(.custom("Avenir Next", size: 11))
+                        .foregroundStyle(theme.textTertiary)
                 }
+
+                infoWidgetCard(title: "Estimated Months",
+                               value: "\(estimatedPayoffMonths(totalDebt: totalInstalmentPrincipal, monthlyRepayment: draftMonthlyRepayment))",
+                               subtitle: "Based on your entered monthly repayment.")
+
+                Spacer(minLength: 0)
             }
-            .pickerStyle(.segmented)
-
-            switch selectedAutoMetric {
-            case .spendingByCategory:
-                if customCategorySeries.isEmpty {
-                    emptyState
-                } else {
-                    Chart {
-                        ForEach(customCategorySeries, id: \.0) { item in
-                            SectorMark(angle: .value("Amount", item.1))
-                                .foregroundStyle(by: .value("Category", item.0))
-                        }
-                    }
-                    .chartLegend(.hidden)
-                    .frame(height: 180)
+            .padding(16)
+            .background(theme.backgroundGradient.ignoresSafeArea())
+            .navigationTitle("Debt Repayment")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { showDebtRepaymentSheet = false }
                 }
-            case .monthlySpending:
-                if customMonthlySeries.isEmpty {
-                    emptyState
-                } else {
-                    Chart {
-                        ForEach(customMonthlySeries, id: \.0) { row in
-                            LineMark(
-                                x: .value("Month", row.0, unit: .month),
-                                y: .value("Spent", (row.1 as NSDecimalNumber).doubleValue)
-                            )
-                            .foregroundStyle(theme.negative)
-                        }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") {
+                        debtRepaymentMonthlyRaw = debtRepaymentInputText
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                            .replacingOccurrences(of: ",", with: "")
+                        showDebtRepaymentSheet = false
                     }
-                    .chartXAxis {
-                        AxisMarks(values: .automatic(desiredCount: selectedPeriod.monthCount))
-                    }
-                    .frame(height: 170)
-                }
-            case .incomeVsExpense:
-                if customMonthlySeries.isEmpty {
-                    emptyState
-                } else {
-                    Chart {
-                        ForEach(customMonthlySeries, id: \.0) { row in
-                            BarMark(
-                                x: .value("Month", row.0, unit: .month),
-                                y: .value("Income", (row.2 as NSDecimalNumber).doubleValue)
-                            )
-                            .foregroundStyle(theme.positive)
-                            BarMark(
-                                x: .value("Month", row.0, unit: .month),
-                                y: .value("Expense", (row.1 as NSDecimalNumber).doubleValue)
-                            )
-                            .foregroundStyle(theme.negative)
-                        }
-                    }
-                    .chartXAxis {
-                        AxisMarks(values: .automatic(desiredCount: selectedPeriod.monthCount))
-                    }
-                    .frame(height: 170)
-                }
-            case .fixedPlanned:
-                if customFixedSeries.allSatisfy({ $0.1 == .zero }) {
-                    emptyState
-                } else {
-                    Chart {
-                        ForEach(customFixedSeries, id: \.0) { row in
-                            BarMark(
-                                x: .value("Month", row.0, unit: .month),
-                                y: .value("Planned", (row.1 as NSDecimalNumber).doubleValue)
-                            )
-                            .foregroundStyle(theme.accent)
-                        }
-                    }
-                    .chartXAxis {
-                        AxisMarks(values: .automatic(desiredCount: selectedPeriod.monthCount))
-                    }
-                    .frame(height: 170)
                 }
             }
         }
@@ -426,6 +378,273 @@ struct StatisticsScreen: View {
             .font(.custom("Avenir Next", size: 12).weight(.bold))
             .foregroundStyle(theme.textSecondary)
             .padding(.horizontal, 18)
+    }
+
+    private func allowedStyles(for metric: StatisticsWidgetMetric) -> [StatisticsChartStyle] {
+        switch metric {
+        case .spendingByCategory, .topCategories:
+            return [.pie, .bar]
+        case .monthlySpending, .incomeVsExpense, .fixedPlanned, .netWorthTrend:
+            return [.line, .bar]
+        case .instalment, .forecast, .debtPayoff:
+            return [.card]
+        }
+    }
+
+    private func supportsPeriod(for metric: StatisticsWidgetMetric) -> Bool {
+        switch metric {
+        case .spendingByCategory, .monthlySpending, .incomeVsExpense, .fixedPlanned, .netWorthTrend, .topCategories:
+            return true
+        case .instalment, .forecast, .debtPayoff:
+            return false
+        }
+    }
+
+    private func widgetSubtitle(for widget: StatisticsWidgetConfig) -> String {
+        if supportsPeriod(for: widget.metric) {
+            return "\(widget.style.rawValue) • \(widget.period.rawValue)"
+        }
+        return widget.style.rawValue
+    }
+
+    private func addWidget() {
+        let style = allowedStyles(for: draftMetric).contains(draftStyle)
+            ? draftStyle
+            : (allowedStyles(for: draftMetric).first ?? .bar)
+        let period: StatisticsPeriod = supportsPeriod(for: draftMetric) ? draftPeriod : .sixMonths
+        widgets.append(StatisticsWidgetConfig(metric: draftMetric, style: style, period: period))
+        saveWidgets()
+    }
+
+    private func removeWidget(_ id: UUID) {
+        widgets.removeAll { $0.id == id }
+        saveWidgets()
+    }
+
+    private func loadWidgets() {
+        guard !widgetsRaw.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            widgets = StatisticsWidgetConfig.defaults
+            return
+        }
+        guard let data = widgetsRaw.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([StatisticsWidgetConfig].self, from: data),
+              !decoded.isEmpty else {
+            widgets = StatisticsWidgetConfig.defaults
+            return
+        }
+        widgets = decoded
+    }
+
+    private func saveWidgets() {
+        guard let data = try? JSONEncoder().encode(widgets),
+              let json = String(data: data, encoding: .utf8) else {
+            return
+        }
+        widgetsRaw = json
+    }
+
+    private func colorForChartIndex(_ index: Int) -> Color {
+        let palette: [Color] = [.blue, .teal, .orange, .pink, .indigo, .green, .cyan, .mint, .red]
+        return palette[index % palette.count]
+    }
+
+    @ViewBuilder
+    private func categoryChart(_ categories: [(String, Decimal)], style: StatisticsChartStyle) -> some View {
+        if categories.isEmpty {
+            emptyState
+        } else if style == .pie {
+            Chart {
+                ForEach(Array(categories.enumerated()), id: \.element.0) { index, item in
+                    SectorMark(angle: .value("Amount", item.1))
+                        .foregroundStyle(colorForChartIndex(index))
+                }
+            }
+            .chartLegend(.hidden)
+            .frame(height: 180)
+            categoryLegend(categories)
+        } else {
+            Chart {
+                ForEach(Array(categories.enumerated()), id: \.element.0) { index, item in
+                    BarMark(
+                        x: .value("Amount", (item.1 as NSDecimalNumber).doubleValue),
+                        y: .value("Category", item.0)
+                    )
+                    .foregroundStyle(colorForChartIndex(index))
+                }
+            }
+            .frame(height: 180)
+        }
+    }
+
+    @ViewBuilder
+    private func monthlySpendingChart(_ series: [(Date, Decimal, Decimal)], style: StatisticsChartStyle) -> some View {
+        if series.isEmpty {
+            emptyState
+        } else if style == .line {
+            Chart {
+                ForEach(series, id: \.0) { row in
+                    LineMark(
+                        x: .value("Month", row.0, unit: .month),
+                        y: .value("Spent", (row.1 as NSDecimalNumber).doubleValue)
+                    )
+                    .foregroundStyle(theme.negative)
+                }
+            }
+            .chartXAxis { AxisMarks(values: .automatic(desiredCount: 6)) }
+            .frame(height: 170)
+        } else {
+            Chart {
+                ForEach(series, id: \.0) { row in
+                    BarMark(
+                        x: .value("Month", row.0, unit: .month),
+                        y: .value("Spent", (row.1 as NSDecimalNumber).doubleValue)
+                    )
+                    .foregroundStyle(theme.negative)
+                }
+            }
+            .chartXAxis { AxisMarks(values: .automatic(desiredCount: 6)) }
+            .frame(height: 170)
+        }
+    }
+
+    @ViewBuilder
+    private func incomeExpenseChart(_ series: [(Date, Decimal, Decimal)], style: StatisticsChartStyle) -> some View {
+        if series.isEmpty {
+            emptyState
+        } else if style == .line {
+            Chart {
+                ForEach(series, id: \.0) { row in
+                    LineMark(
+                        x: .value("Month", row.0, unit: .month),
+                        y: .value("Income", (row.2 as NSDecimalNumber).doubleValue)
+                    )
+                    .foregroundStyle(theme.positive)
+                    LineMark(
+                        x: .value("Month", row.0, unit: .month),
+                        y: .value("Expense", (row.1 as NSDecimalNumber).doubleValue)
+                    )
+                    .foregroundStyle(theme.negative)
+                }
+            }
+            .chartXAxis { AxisMarks(values: .automatic(desiredCount: 6)) }
+            .frame(height: 170)
+        } else {
+            Chart {
+                ForEach(series, id: \.0) { row in
+                    BarMark(
+                        x: .value("Month", row.0, unit: .month),
+                        y: .value("Income", (row.2 as NSDecimalNumber).doubleValue)
+                    )
+                    .foregroundStyle(theme.positive)
+                    BarMark(
+                        x: .value("Month", row.0, unit: .month),
+                        y: .value("Expense", (row.1 as NSDecimalNumber).doubleValue)
+                    )
+                    .foregroundStyle(theme.negative)
+                }
+            }
+            .chartXAxis { AxisMarks(values: .automatic(desiredCount: 6)) }
+            .frame(height: 170)
+        }
+    }
+
+    @ViewBuilder
+    private func fixedPlannedChart(_ series: [(Date, Decimal)], style: StatisticsChartStyle) -> some View {
+        if series.allSatisfy({ $0.1 == .zero }) {
+            emptyState
+        } else if style == .line {
+            Chart {
+                ForEach(series, id: \.0) { row in
+                    LineMark(
+                        x: .value("Month", row.0, unit: .month),
+                        y: .value("Planned", (row.1 as NSDecimalNumber).doubleValue)
+                    )
+                    .foregroundStyle(theme.accent)
+                }
+            }
+            .chartXAxis { AxisMarks(values: .automatic(desiredCount: 6)) }
+            .frame(height: 170)
+        } else {
+            Chart {
+                ForEach(series, id: \.0) { row in
+                    BarMark(
+                        x: .value("Month", row.0, unit: .month),
+                        y: .value("Planned", (row.1 as NSDecimalNumber).doubleValue)
+                    )
+                    .foregroundStyle(theme.accent)
+                }
+            }
+            .chartXAxis { AxisMarks(values: .automatic(desiredCount: 6)) }
+            .frame(height: 170)
+        }
+    }
+
+    @ViewBuilder
+    private func netWorthChart(_ series: [(Date, Decimal)], style: StatisticsChartStyle) -> some View {
+        if series.isEmpty {
+            emptyState
+        } else if style == .bar {
+            Chart {
+                ForEach(series, id: \.0) { row in
+                    BarMark(
+                        x: .value("Month", row.0, unit: .month),
+                        y: .value("Net Worth", (row.1 as NSDecimalNumber).doubleValue)
+                    )
+                    .foregroundStyle(theme.accent)
+                }
+            }
+            .chartXAxis { AxisMarks(values: .automatic(desiredCount: 6)) }
+            .frame(height: 170)
+        } else {
+            Chart {
+                ForEach(series, id: \.0) { row in
+                    LineMark(
+                        x: .value("Month", row.0, unit: .month),
+                        y: .value("Net Worth", (row.1 as NSDecimalNumber).doubleValue)
+                    )
+                    .foregroundStyle(theme.accent)
+                }
+            }
+            .chartXAxis { AxisMarks(values: .automatic(desiredCount: 6)) }
+            .frame(height: 170)
+        }
+    }
+
+    private func categoryLegend(_ categories: [(String, Decimal)]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(Array(categories.enumerated()), id: \.element.0) { index, item in
+                HStack(spacing: 8) {
+                    Circle()
+                        .fill(colorForChartIndex(index))
+                        .frame(width: 8, height: 8)
+                    Text(item.0)
+                        .font(.custom("Avenir Next", size: 11).weight(.semibold))
+                        .foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Text(CurrencyFormatter.sgd(amount: item.1))
+                        .font(.custom("Avenir Next", size: 11))
+                        .foregroundStyle(theme.textSecondary)
+                }
+            }
+        }
+        .padding(.top, 8)
+    }
+
+    private func infoWidgetCard(title: String, value: String, subtitle: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.custom("Avenir Next", size: 12).weight(.semibold))
+                .foregroundStyle(theme.textSecondary)
+            Text(value)
+                .font(.custom("Avenir Next", size: 20).weight(.bold))
+                .foregroundStyle(theme.textPrimary)
+            Text(subtitle)
+                .font(.custom("Avenir Next", size: 11))
+                .foregroundStyle(theme.textTertiary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10).fill(theme.surfaceAlt))
     }
 
     private func expenseByCategory(monthCount: Int) -> [(String, Decimal)] {
@@ -566,34 +785,37 @@ struct StatisticsScreen: View {
         }
     }
 
-    private func debtPayoffEstimate() -> (totalDebt: Decimal, months: Int) {
-        let creditAccounts = allAccounts.filter {
-            profileAccountIds.contains($0.id) && $0.type == .credit
-        }
-        let totalDebt = creditAccounts.reduce(Decimal.zero) { partial, account in
-            let spent = transactions
-                .filter { $0.accountId == account.id && $0.type == .expense }
-                .reduce(Decimal.zero) { $0 + $1.amount }
-            let repaid = transactions
-                .filter {
-                    $0.accountId == account.id &&
-                    ($0.type == .transfer || $0.type == .income)
-                }
-                .reduce(Decimal.zero) { $0 + $1.amount }
-            return partial + max(Decimal.zero, spent - repaid)
-        }
+    private var draftMonthlyRepayment: Decimal {
+        let normalized = debtRepaymentInputText
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: ",", with: "")
+        guard let value = Decimal(string: normalized), value > 0 else { return .zero }
+        return value
+    }
 
-        let monthlyPayment = Decimal(string: debtMonthlyPaymentText) ?? .zero
-        let months: Int
-        if monthlyPayment <= 0 || totalDebt <= 0 {
-            months = 0
-        } else {
-            let m = NSDecimalNumber(decimal: totalDebt)
-                .dividing(by: NSDecimalNumber(decimal: monthlyPayment))
-                .doubleValue
-            months = Int(ceil(m))
+    private func installmentPrincipal(for payment: FixedPayment) -> Decimal {
+        if let outstanding = payment.outstandingAmount, outstanding > 0 {
+            return outstanding
         }
-        return (totalDebt, months)
+        if let cycles = payment.cycles, cycles > 0 {
+            return payment.amount * Decimal(cycles)
+        }
+        return max(payment.amount, .zero)
+    }
+
+    private func estimatedPayoffMonths(totalDebt: Decimal, monthlyRepayment: Decimal) -> Int {
+        guard totalDebt > 0, monthlyRepayment > 0 else { return 0 }
+        let months = NSDecimalNumber(decimal: totalDebt)
+            .dividing(by: NSDecimalNumber(decimal: monthlyRepayment))
+            .doubleValue
+        return Int(ceil(months))
+    }
+
+    private func debtPayoffEstimate() -> (totalDebt: Decimal, monthlyRepayment: Decimal, months: Int) {
+        let totalDebt = totalInstalmentPrincipal
+        let monthlyRepayment = monthlyRepaymentInput
+        let months = estimatedPayoffMonths(totalDebt: totalDebt, monthlyRepayment: monthlyRepayment)
+        return (totalDebt, monthlyRepayment, months)
     }
 }
 

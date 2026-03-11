@@ -119,6 +119,7 @@ enum FrugalPilotBackupService {
             if let existing = accountById[dto.id] {
                 existing.bankName = dto.bankName
                 existing.accountName = dto.accountName
+                existing.cardNumber = dto.cardNumber
                 existing.currentCredit = dto.currentCredit
                 existing.amount = dto.amount
                 existing.type = dto.type
@@ -132,6 +133,7 @@ enum FrugalPilotBackupService {
                     id: dto.id,
                     bankName: dto.bankName,
                     accountName: dto.accountName,
+                    cardNumber: dto.cardNumber,
                     currentCredit: dto.currentCredit,
                     amount: dto.amount,
                     type: dto.type,

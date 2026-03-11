@@ -193,10 +193,11 @@ struct AccountDetailScreen: View {
         }
         .sheet(isPresented: $showEditSheet) {
             if let account = account {
-                EditAccountScreen(vm: vm, account: account) { bank, acctName, amount, type, credit, pooled, billingDay, colorHex in
+                EditAccountScreen(vm: vm, account: account) { bank, acctName, cardNumber, amount, type, credit, pooled, billingDay, colorHex in
                     vm.updateAccount(id: accountId,
                                      bankName: bank,
                                      accountName: acctName,
+                                     cardNumber: cardNumber,
                                      amount: amount,
                                      type: type,
                                      currentCredit: credit,
@@ -235,6 +236,12 @@ struct AccountDetailScreen: View {
                 .font(.system(size: 22, weight: .bold))
                 .foregroundStyle(theme.textPrimary)
 
+            if account.type == .credit, let maskedCard = maskedCardNumber(account.cardNumber) {
+                Text(maskedCard)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(theme.textSecondary)
+            }
+
             Text(account.type.rawValue)
                 .font(.system(size: 13, weight: .bold))
                 .foregroundStyle(theme.textTertiary)
@@ -244,6 +251,13 @@ struct AccountDetailScreen: View {
         }
         .padding(.top, 14)
         .padding(.bottom, 10)
+    }
+
+    private func maskedCardNumber(_ cardNumber: String) -> String? {
+        let digits = cardNumber.filter { $0.isNumber }
+        guard digits.count >= 4 else { return nil }
+        let tail = String(digits.suffix(4))
+        return "Card •••• \(tail)"
     }
 
     private var creditCard: some View {

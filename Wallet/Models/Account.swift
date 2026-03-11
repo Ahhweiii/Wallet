@@ -20,6 +20,7 @@ final class Account: Identifiable, Hashable {
 
     var bankName: String = ""
     var accountName: String = ""
+    var cardNumber: String = ""
 
     var currentCredit: Decimal = 0
     var amount: Decimal = 0
@@ -37,6 +38,7 @@ final class Account: Identifiable, Hashable {
     init(id: UUID = UUID(),
          bankName: String,
          accountName: String,
+         cardNumber: String = "",
          currentCredit: Decimal,
          amount: Decimal,
          type: AccountType,
@@ -48,6 +50,7 @@ final class Account: Identifiable, Hashable {
         self.id = id
         self.bankName = bankName
         self.accountName = accountName
+        self.cardNumber = cardNumber
         self.currentCredit = currentCredit
         self.amount = amount
         self.type = type

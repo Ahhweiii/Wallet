@@ -47,8 +47,6 @@ struct DashboardScreen: View {
     @AppStorage("tracking_current_profile") private var currentProfileRaw: String = "Personal"
     @AppStorage("tracking_profiles") private var trackingProfilesRaw: String = "Personal"
     private var currentPlan: SubscriptionPlan { SubscriptionPlan(rawValue: planRaw) ?? .free }
-    private var hasPremiumAccess: Bool { SubscriptionManager.hasProFeatures }
-
     @State private var selectedTab: Int = 0
     @State private var showSidePanel: Bool = false
     @State private var accountPage: Int = 0
@@ -61,7 +59,6 @@ struct DashboardScreen: View {
     @State private var showSettingsSheet = false
     @State private var showBackupSheet = false
     @State private var showSmartToolsSheet = false
-    @State private var showAutomationSetupSheet = false
     @State private var showProfileOverviewSheet = false
     @State private var showNotificationsSheet = false
     @State private var showBackupExporter = false
@@ -168,6 +165,10 @@ struct DashboardScreen: View {
         vm.canAddAccount()
     }
 
+    private var hasPremiumAccess: Bool {
+        SubscriptionManager.hasProFeatures
+    }
+
     private var safeTimestampString: String {
         DashboardFormatterCache.backupFilenameTimestamp.string(from: Date())
     }
@@ -189,9 +190,10 @@ struct DashboardScreen: View {
     private func applySheets<V: View>(_ view: V) -> some View {
         view
             .sheet(isPresented: $showAddAccount) {
-                AddAccountScreen(vm: vm) { bank, account, amount, type, credit, pooled, billingDay, colorHex in
+                AddAccountScreen(vm: vm) { bank, account, cardNumber, amount, type, credit, pooled, billingDay, colorHex in
                     let added = vm.addAccount(bankName: bank,
                                               accountName: account,
+                                              cardNumber: cardNumber,
                                               amount: amount,
                                               type: type,
                                               currentCredit: credit,
@@ -214,9 +216,6 @@ struct DashboardScreen: View {
             .sheet(isPresented: $showBackupSheet) { backupSheet }
             .sheet(isPresented: $showSmartToolsSheet) {
                 SmartToolsScreen(currentProfileName: currentProfileName)
-            }
-            .sheet(isPresented: $showAutomationSetupSheet) {
-                AutomationSetupScreen()
             }
             .sheet(isPresented: $showProfileOverviewSheet) {
                 ProfileOverviewScreen()
@@ -410,9 +409,9 @@ struct DashboardScreen: View {
             if hasPremiumAccess {
                 StatisticsScreen()
             } else {
-                premiumLockedView(
-                    title: "Pro Feature",
-                    message: "Advanced statistics and debt planner are available in Pro or Lifetime."
+                premiumLockedContent(
+                    title: "Statistics is a Pro feature",
+                    subtitle: "Upgrade to Pro or Lifetime to unlock advanced widgets and analytics."
                 )
             }
         case 3:
@@ -420,30 +419,6 @@ struct DashboardScreen: View {
         default:
             placeholderTab
         }
-    }
-
-    private func premiumLockedView(title: String, message: String) -> some View {
-        VStack(spacing: 12) {
-            Image(systemName: "lock.circle.fill")
-                .font(.system(size: 34))
-                .foregroundStyle(theme.accent)
-            Text(title)
-                .font(.custom("Avenir Next", size: 18).weight(.bold))
-                .foregroundStyle(theme.textPrimary)
-            Text(message)
-                .font(.custom("Avenir Next", size: 13).weight(.medium))
-                .foregroundStyle(theme.textSecondary)
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 24)
-            Button("View Plans") {
-                selectedSettingsTab = .apple
-                showSettingsSheet = true
-            }
-            .font(.custom("Avenir Next", size: 13).weight(.semibold))
-            .foregroundStyle(theme.accent)
-            .padding(.top, 2)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private var dashboardTab: some View {
@@ -617,7 +592,10 @@ struct DashboardScreen: View {
 
             sidePanelItem(index: 0, title: "Dashboard", icon: "dollarsign.circle")
             sidePanelItem(index: 1, title: "Planning", icon: "clock")
-            sidePanelItem(index: 2, title: "Statistics", icon: "chart.bar", isLocked: !hasPremiumAccess)
+            sidePanelItem(index: 2,
+                          title: "Statistics",
+                          icon: "chart.bar",
+                          isLocked: !hasPremiumAccess)
             sidePanelItem(index: 3, title: "More", icon: "ellipsis")
 
             Divider()
@@ -701,6 +679,11 @@ struct DashboardScreen: View {
 
     private func sidePanelItem(index: Int, title: String, icon: String, isLocked: Bool = false) -> some View {
         Button {
+            if isLocked {
+                storeStatusMessage = "This section is available on Pro and Lifetime."
+                showStoreStatusAlert = true
+                return
+            }
             selectedTab = index
             withAnimation(.easeInOut(duration: 0.2)) {
                 showSidePanel = false
@@ -1538,12 +1521,15 @@ struct DashboardScreen: View {
 
     private func deleteProfile(_ profile: String) {
         guard profile.caseInsensitiveCompare("Personal") != .orderedSame else { return }
+        // Prevent SwiftData detached-fault crashes while profile records are deleted.
+        filteredTransactionsCache = []
         vm.deleteProfile(named: profile)
         let remaining = trackingProfiles.filter { $0.caseInsensitiveCompare(profile) != .orderedSame }
         trackingProfilesRaw = remaining.isEmpty ? "Personal" : remaining.joined(separator: "|")
         if currentProfileRaw.caseInsensitiveCompare(profile) == .orderedSame {
             currentProfileRaw = "Personal"
         }
+        refreshDerivedDashboardData()
     }
 
     private func subscriptionProductRow(descriptor: SubscriptionPlanDescriptor) -> some View {
@@ -1812,8 +1798,7 @@ struct DashboardScreen: View {
             moreActionRow(
                 title: "Backups",
                 subtitle: "Export and import wallet backups",
-                icon: "externaldrive.badge.plus",
-                isPremium: false
+                icon: "externaldrive.badge.plus"
             ) {
                 showBackupSheet = true
             }
@@ -1821,21 +1806,14 @@ struct DashboardScreen: View {
             moreActionRow(
                 title: "Smart Tools",
                 subtitle: "Budgets, savings goals, reminders, and auto rules",
-                icon: "wand.and.stars",
-                isPremium: true
+                icon: "wand.and.stars"
             ) {
-                guard hasPremiumAccess else { openSubscriptionPlans(for: "Smart Tools"); return }
-                showSmartToolsSheet = true
-            }
-
-            moreActionRow(
-                title: "Automation Setup",
-                subtitle: "Shortcuts and quick-add transaction automation",
-                icon: "bolt.horizontal.circle",
-                isPremium: true
-            ) {
-                guard hasPremiumAccess else { openSubscriptionPlans(for: "Automation Setup"); return }
-                showAutomationSetupSheet = true
+                if hasPremiumAccess {
+                    showSmartToolsSheet = true
+                } else {
+                    storeStatusMessage = "Smart Tools is available on Pro and Lifetime."
+                    showStoreStatusAlert = true
+                }
             }
 
             Spacer(minLength: 24)
@@ -1846,7 +1824,6 @@ struct DashboardScreen: View {
     private func moreActionRow(title: String,
                                subtitle: String,
                                icon: String,
-                               isPremium: Bool = false,
                                action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack(spacing: 12) {
@@ -1857,19 +1834,9 @@ struct DashboardScreen: View {
                     .background(Circle().fill(theme.surfaceAlt))
 
                 VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(title)
-                            .font(.custom("Avenir Next", size: 16).weight(.semibold))
-                            .foregroundStyle(theme.textPrimary)
-                        if isPremium && !hasPremiumAccess {
-                            Text("Pro")
-                                .font(.custom("Avenir Next", size: 10).weight(.bold))
-                                .foregroundStyle(theme.negative)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(Capsule().fill(theme.surfaceAlt))
-                        }
-                    }
+                    Text(title)
+                        .font(.custom("Avenir Next", size: 16).weight(.semibold))
+                        .foregroundStyle(theme.textPrimary)
                     Text(subtitle)
                         .font(.custom("Avenir Next", size: 11).weight(.medium))
                         .foregroundStyle(theme.textTertiary)
@@ -1887,11 +1854,30 @@ struct DashboardScreen: View {
         .padding(.horizontal, 18)
     }
 
-    private func openSubscriptionPlans(for feature: String) {
-        selectedSettingsTab = .apple
-        showSettingsSheet = true
-        storeStatusMessage = "\(feature) requires Pro or Lifetime."
-        showStoreStatusAlert = true
+    private func premiumLockedContent(title: String, subtitle: String) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: "lock.fill")
+                .font(.system(size: 28, weight: .bold))
+                .foregroundStyle(theme.textTertiary)
+            Text(title)
+                .font(.custom("Avenir Next", size: 16).weight(.bold))
+                .foregroundStyle(theme.textPrimary)
+            Text(subtitle)
+                .font(.custom("Avenir Next", size: 12).weight(.medium))
+                .foregroundStyle(theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+            Button("View Plans") {
+                selectedTab = 3
+                showSettingsSheet = true
+                selectedSettingsTab = .apple
+            }
+            .font(.custom("Avenir Next", size: 12).weight(.semibold))
+            .foregroundStyle(theme.accent)
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 18)
     }
 
     private func redeemVoucher() {
@@ -1912,8 +1898,7 @@ struct DashboardScreen: View {
                     }
                 } catch {
                     await MainActor.run {
-                        let nsError = error as NSError
-                        storeStatusMessage = "Voucher redemption failed. Native=\(nsError.domain)(\(nsError.code)) Desc=\(nsError.localizedDescription)"
+                        storeStatusMessage = "Voucher redemption failed. Please try again."
                         showStoreStatusAlert = true
                     }
                 }

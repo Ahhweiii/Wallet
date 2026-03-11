@@ -15,6 +15,7 @@ struct EditAccountScreen: View {
 
     let onSave: (_ bankName: String,
                  _ accountName: String,
+                 _ cardNumber: String,
                  _ amount: Decimal,
                  _ type: AccountType,
                  _ currentCredit: Decimal,
@@ -26,6 +27,7 @@ struct EditAccountScreen: View {
 
     @State private var bankName: String
     @State private var accountName: String
+    @State private var cardNumber: String
     @State private var balanceText: String
     @State private var creditText: String
     @State private var selectedType: AccountType
@@ -42,6 +44,7 @@ struct EditAccountScreen: View {
          account: Account,
          onSave: @escaping (_ bankName: String,
                             _ accountName: String,
+                            _ cardNumber: String,
                             _ amount: Decimal,
                             _ type: AccountType,
                             _ currentCredit: Decimal,
@@ -54,6 +57,7 @@ struct EditAccountScreen: View {
 
         _bankName = State(initialValue: account.bankName)
         _accountName = State(initialValue: account.accountName)
+        _cardNumber = State(initialValue: account.cardNumber)
         _balanceText = State(initialValue: "\(account.amount)")
         _creditText = State(initialValue: "\(account.currentCredit)")
         _selectedType = State(initialValue: account.type)
@@ -145,6 +149,10 @@ struct EditAccountScreen: View {
                     VStack(spacing: 20) {
                         field(title: "Bank", placeholder: "e.g. DBS", text: $bankName)
                         field(title: "Account", placeholder: "e.g. Altitude", text: $accountName)
+                        if selectedType == .credit {
+                            field(title: "Card Number", placeholder: "Last 4 or full number", text: $cardNumber)
+                                .keyboardType(.numberPad)
+                        }
 
                         availableOrBalanceSection
 
@@ -344,6 +352,7 @@ struct EditAccountScreen: View {
         Button {
             let b = normalizedBankName
             let a = accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let c = cardNumber.trimmingCharacters(in: .whitespacesAndNewlines)
 
             let amt: Decimal = {
                 if selectedType == .cash {
@@ -364,7 +373,7 @@ struct EditAccountScreen: View {
             }()
 
             let billingDay = (selectedType == .credit) ? billingCycleStartDay : 1
-            onSave(b, a, amt, selectedType, credit, shareBankCreditLimit, billingDay, selectedColorHex)
+            onSave(b, a, c, amt, selectedType, credit, shareBankCreditLimit, billingDay, selectedColorHex)
             dismiss()
         } label: {
             Text("Save Changes")

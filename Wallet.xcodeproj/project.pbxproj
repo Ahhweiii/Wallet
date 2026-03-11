@@ -174,16 +174,16 @@
 				BuildIndependentTargetsInParallel = 1;
 				LastSwiftUpdateCheck = 2620;
 				LastUpgradeCheck = 2630;
-					TargetAttributes = {
-						E4BD1D582F4A056800564AAD = {
-							CreatedOnToolsVersion = 26.2;
-							SystemCapabilities = {
-								com.apple.Push = {
-									enabled = 1;
-								};
+				TargetAttributes = {
+					E4BD1D582F4A056800564AAD = {
+						CreatedOnToolsVersion = 26.2;
+						SystemCapabilities = {
+							com.apple.Push = {
+								enabled = 1;
 							};
 						};
-						E4BD1D672F4A056A00564AAD = {
+					};
+					E4BD1D672F4A056A00564AAD = {
 						CreatedOnToolsVersion = 26.2;
 						TestTargetID = E4BD1D582F4A056800564AAD;
 					};

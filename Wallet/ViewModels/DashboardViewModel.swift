@@ -53,6 +53,13 @@ final class DashboardViewModel: ObservableObject {
         let normalized = Self.normalizedProfileName(profileName)
         guard normalized.caseInsensitiveCompare("Personal") != .orderedSame else { return }
 
+        // Drop UI-facing references first to avoid reading detached model faults
+        // while SwiftData objects are being deleted.
+        transactions = []
+        accounts = []
+        accountsByID = [:]
+        invalidateComputedCaches()
+
         let allAccounts = (try? modelContext.fetch(FetchDescriptor<Account>())) ?? []
         let accountIds = Set(
             allAccounts
@@ -560,6 +567,7 @@ final class DashboardViewModel: ObservableObject {
 
     func addAccount(bankName: String,
                     accountName: String,
+                    cardNumber: String = "",
                     amount: Decimal,
                     type: AccountType,
                     currentCredit: Decimal,
@@ -575,6 +583,7 @@ final class DashboardViewModel: ObservableObject {
 
         let bank = bankName.uppercased()
         let acctName = accountName.uppercased()
+        let normalizedCardNumber = cardNumber.filter { $0.isNumber }
 
         let pooled = (type == .credit) ? isInCombinedCreditPool : false
         let normalizedProfile = Self.normalizedProfileName(profileName)
@@ -589,6 +598,7 @@ final class DashboardViewModel: ObservableObject {
         let account = Account(
             bankName: bank,
             accountName: acctName,
+            cardNumber: normalizedCardNumber,
             currentCredit: creditToStore,
             amount: amountToStore,
             type: type,
@@ -615,6 +625,7 @@ final class DashboardViewModel: ObservableObject {
     func updateAccount(id: UUID,
                        bankName: String,
                        accountName: String,
+                       cardNumber: String = "",
                        amount: Decimal,
                        type: AccountType,
                        currentCredit: Decimal,
@@ -628,6 +639,7 @@ final class DashboardViewModel: ObservableObject {
 
         account.bankName = newBank
         account.accountName = accountName.uppercased()
+        account.cardNumber = cardNumber.filter { $0.isNumber }
         account.type = type
         account.iconSystemName = (type == .cash) ? "banknote" : "creditcard.fill"
         account.billingCycleStartDay = min(max(billingCycleStartDay, 1), 31)

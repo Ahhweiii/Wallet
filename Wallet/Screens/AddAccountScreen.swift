@@ -14,6 +14,7 @@ struct AddAccountScreen: View {
 
     let onSave: (_ bankName: String,
                  _ accountName: String,
+                 _ cardNumber: String,
                  _ amount: Decimal,
                  _ type: AccountType,
                  _ currentCredit: Decimal,
@@ -25,6 +26,7 @@ struct AddAccountScreen: View {
 
     @State private var bankName: String = ""
     @State private var accountName: String = ""
+    @State private var cardNumber: String = ""
     @State private var balanceText: String = ""
     @State private var creditText: String = ""
     @State private var selectedType: AccountType = .cash
@@ -122,6 +124,11 @@ struct AddAccountScreen: View {
 
                         field(title: "Account", placeholder: "e.g. Altitude", text: $accountName)
                             .textInputAutocapitalization(.words)
+
+                        if selectedType == .credit {
+                            field(title: "Card Number", placeholder: "Last 4 or full number", text: $cardNumber)
+                                .keyboardType(.numberPad)
+                        }
 
                         availableOrBalanceSection
 
@@ -322,6 +329,7 @@ struct AddAccountScreen: View {
         Button {
             let b = normalizedBankName
             let a = accountName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let c = cardNumber.trimmingCharacters(in: .whitespacesAndNewlines)
 
             let pooled = (selectedType == .credit) ? shareBankCreditLimit : false
 
@@ -340,7 +348,7 @@ struct AddAccountScreen: View {
             }()
 
             let billingDay = (selectedType == .credit) ? billingCycleStartDay : 1
-            onSave(b, a, availableOrBalance, selectedType, credit, pooled, billingDay, selectedColorHex)
+            onSave(b, a, c, availableOrBalance, selectedType, credit, pooled, billingDay, selectedColorHex)
             dismiss()
         } label: {
             Text("Add Account")

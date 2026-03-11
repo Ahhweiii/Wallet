@@ -55,6 +55,7 @@ struct AccountDTO: Codable, Hashable {
     var id: UUID
     var bankName: String
     var accountName: String
+    var cardNumber: String
     var currentCredit: Decimal
     var amount: Decimal
     var type: AccountType
@@ -68,6 +69,7 @@ struct AccountDTO: Codable, Hashable {
         self.id = model.id
         self.bankName = model.bankName
         self.accountName = model.accountName
+        self.cardNumber = model.cardNumber
         self.currentCredit = model.currentCredit
         self.amount = model.amount
         self.type = model.type
@@ -79,7 +81,7 @@ struct AccountDTO: Codable, Hashable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, bankName, accountName, currentCredit, amount, type, colorHex, iconSystemName, isInCombinedCreditPool, profileName, billingCycleStartDay
+        case id, bankName, accountName, cardNumber, currentCredit, amount, type, colorHex, iconSystemName, isInCombinedCreditPool, profileName, billingCycleStartDay
     }
 
     init(from decoder: Decoder) throws {
@@ -87,6 +89,7 @@ struct AccountDTO: Codable, Hashable {
         self.id = try container.decode(UUID.self, forKey: .id)
         self.bankName = try container.decode(String.self, forKey: .bankName)
         self.accountName = try container.decode(String.self, forKey: .accountName)
+        self.cardNumber = try container.decodeIfPresent(String.self, forKey: .cardNumber) ?? ""
         self.currentCredit = try container.decode(Decimal.self, forKey: .currentCredit)
         self.amount = try container.decode(Decimal.self, forKey: .amount)
         self.type = try container.decode(AccountType.self, forKey: .type)

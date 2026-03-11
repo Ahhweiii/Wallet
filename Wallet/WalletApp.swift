@@ -11,6 +11,7 @@ import SwiftData
 @main
 struct FrugalPilotApp: App {
     @State private var container: ModelContainer?
+    @State private var startupErrorMessage: String?
     private static let cloudSyncActiveKey = "cloud_sync_active"
     private static let cloudSyncLastErrorKey = "cloud_sync_last_error"
 
@@ -26,9 +27,7 @@ struct FrugalPilotApp: App {
             }
             .task {
                 SubscriptionManager.startTransactionUpdatesListener()
-                guard container == nil else { return }
-                let preferCloudSync = SubscriptionManager.hasICloudSync
-                container = FrugalPilotApp.makeContainerWithRecovery(preferCloudSync: preferCloudSync)
+                await initializeContainerIfNeeded()
             }
         }
     }
@@ -41,67 +40,125 @@ struct FrugalPilotApp: App {
             .ignoresSafeArea()
 
             VStack(spacing: 12) {
-                ProgressView()
-                    .progressViewStyle(.circular)
-                    .tint(.white)
-                Text("Preparing your wallet...")
-                    .font(.headline)
-                    .foregroundStyle(.white.opacity(0.9))
+                if let startupErrorMessage {
+                    Text("Could not start wallet storage.")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    Text(startupErrorMessage)
+                        .font(.footnote)
+                        .multilineTextAlignment(.center)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .padding(.horizontal, 20)
+                    Button {
+                        Task { await retryContainerInitialization() }
+                    } label: {
+                        Text("Retry")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 20)
+                            .padding(.vertical, 10)
+                            .background(
+                                Capsule()
+                                    .fill(Color.white.opacity(0.2))
+                            )
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    ProgressView()
+                        .progressViewStyle(.circular)
+                        .tint(.white)
+                    Text("Preparing your wallet...")
+                        .font(.headline)
+                        .foregroundStyle(.white.opacity(0.9))
+                }
             }
         }
     }
 
-    private static func makeContainerWithRecovery(preferCloudSync: Bool) -> ModelContainer {
+    private func initializeContainerIfNeeded() async {
+        guard container == nil else { return }
+        startupErrorMessage = nil
+        let preferCloudSync = SubscriptionManager.hasICloudSync
+        let result = FrugalPilotApp.makeContainerWithRecovery(preferCloudSync: preferCloudSync)
+        container = result.container
+        startupErrorMessage = result.errorMessage
+    }
+
+    private func retryContainerInitialization() async {
+        container = nil
+        startupErrorMessage = nil
+        await initializeContainerIfNeeded()
+    }
+
+    private static func makeContainerWithRecovery(preferCloudSync: Bool) -> (container: ModelContainer?, errorMessage: String?) {
         UserDefaults.standard.removeObject(forKey: cloudSyncLastErrorKey)
+        var errors: [String] = []
 
         if preferCloudSync {
             do {
                 let cloud = try makeContainer(useCloudKit: true)
                 UserDefaults.standard.set(true, forKey: cloudSyncActiveKey)
                 UserDefaults.standard.removeObject(forKey: cloudSyncLastErrorKey)
-                return cloud
+                return (cloud, nil)
             } catch {
                 UserDefaults.standard.set(String(describing: error), forKey: cloudSyncLastErrorKey)
+                errors.append("Cloud sync store unavailable.")
             }
         }
 
         UserDefaults.standard.set(false, forKey: cloudSyncActiveKey)
         do {
             let local = try makeContainer(useCloudKit: false)
-            return local
-        } catch { }
+            return (local, nil)
+        } catch {
+            errors.append("Local store unavailable.")
+        }
 
         // Attempt a safe reset by deleting the local store and recreating.
         let didReset = resetLocalStore()
         UserDefaults.standard.set(didReset, forKey: "did_reset_store")
         do {
             let localAfterReset = try makeContainer(useCloudKit: false)
-            return localAfterReset
-        } catch { }
+            return (localAfterReset, nil)
+        } catch {
+            errors.append("Local recovery failed.")
+        }
 
         // Try SwiftData's default storage location as another recovery path.
         do {
             let defaultLocal = try makeDefaultContainer()
-            return defaultLocal
-        } catch { }
+            return (defaultLocal, nil)
+        } catch {
+            errors.append("Default store unavailable.")
+        }
 
         // Final fallback: keep app launchable even if persistent store is corrupted.
         do {
             let memory = try makeInMemoryContainer()
-            return memory
-        } catch { }
+            return (memory, nil)
+        } catch {
+            errors.append("In-memory store unavailable.")
+        }
 
         // Last resort: force reset once more then retry in-memory/default order.
         _ = resetLocalStore()
         do {
             let memoryAfterReset = try makeInMemoryContainer()
-            return memoryAfterReset
-        } catch { }
+            return (memoryAfterReset, nil)
+        } catch {
+            errors.append("In-memory recovery failed.")
+        }
         do {
             let defaultAfterReset = try makeDefaultContainer()
-            return defaultAfterReset
-        } catch { }
-        fatalError("Failed to create any ModelContainer after all recovery attempts.")
+            return (defaultAfterReset, nil)
+        } catch {
+            errors.append("Default recovery failed.")
+        }
+
+        let message = errors.isEmpty
+            ? "All storage initialization attempts failed."
+            : errors.joined(separator: " ")
+        return (nil, message)
     }
 
     private static func makeContainer(useCloudKit: Bool) throws -> ModelContainer {

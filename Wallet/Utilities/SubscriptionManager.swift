@@ -101,11 +101,11 @@ enum SubscriptionManager {
     }
 
     static var hasProFeatures: Bool {
-        hasPaidLimits
+        currentPlan != .free
     }
 
     static var hasICloudSync: Bool {
-        true
+        currentPlan != .free
     }
 
     static var hasAppLock: Bool {
